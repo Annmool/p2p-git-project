@@ -1,0 +1,4 @@
+/home/anmol/Desktop/p2p-git-project/build/CMakeFiles/P2PGitProject.dir
+/home/anmol/Desktop/p2p-git-project/build/CMakeFiles/edit_cache.dir
+/home/anmol/Desktop/p2p-git-project/build/CMakeFiles/rebuild_cache.dir
+/home/anmol/Desktop/p2p-git-project/build/CMakeFiles/P2PGitProject_autogen.dir
