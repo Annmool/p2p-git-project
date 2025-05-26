@@ -4,12 +4,15 @@
 #include <QMainWindow>
 #include <QPushButton>
 #include <QLineEdit>
-#include <QTextEdit> // To display messages
+#include <QTextEdit>
 #include <QVBoxLayout>
-#include "git_backend.h" // Include our backend
+#include <QLabel>
+#include <QListWidget> // For displaying commit log
+
+#include "git_backend.h" // Includes CommitInfo struct
 
 QT_BEGIN_NAMESPACE
-namespace Ui { class MainWindow; } // Forward declaration for UI file if using .ui
+namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 class MainWindow : public QMainWindow {
@@ -20,17 +23,26 @@ public:
     ~MainWindow();
 
 private slots:
-    void onInitRepoClicked(); // Slot for button click
+    void onInitRepoClicked();
+    void onOpenRepoClicked();
+    void onRefreshLogClicked(); // Slot for refresh log button
 
 private:
-    // Ui::MainWindow *ui; // If using a .ui file from Qt Designer
+    void updateRepositoryStatus();
+    void displayCommitLog(const std::vector<CommitInfo>& log); // Helper to populate QListWidget
 
-    // Manual UI elements
+    // UI Elements
     QLineEdit *repoPathInput;
     QPushButton *initRepoButton;
-    QTextEdit *messageLog; // To display success/error messages
+    QPushButton *openRepoButton;
+    QLabel *currentRepoLabel;
 
-    GitBackend gitBackend; // Instance of our Git backend logic
+    QListWidget *commitLogWidget; // For displaying commit log
+    QPushButton *refreshLogButton; // Button to refresh the log
+
+    QTextEdit *messageLog; // General status messages
+
+    GitBackend gitBackend;
 };
 
 #endif // MAINWINDOW_H
