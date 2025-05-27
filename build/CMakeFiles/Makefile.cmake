@@ -49,7 +49,6 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/usr/lib/x86_64-linux-gnu/cmake/Qt5Widgets/Qt5WidgetsConfigExtras.cmake"
   "/usr/lib/x86_64-linux-gnu/cmake/Qt5Widgets/Qt5WidgetsConfigVersion.cmake"
   "/usr/lib/x86_64-linux-gnu/cmake/Qt5Widgets/Qt5WidgetsMacros.cmake"
-<<<<<<< HEAD
   "/usr/share/cmake-3.22/Modules/CMakeCXXCompiler.cmake.in"
   "/usr/share/cmake-3.22/Modules/CMakeCXXCompilerABI.cpp"
   "/usr/share/cmake-3.22/Modules/CMakeCXXInformation.cmake"
@@ -62,15 +61,10 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/usr/share/cmake-3.22/Modules/CMakeDetermineCompilerId.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeDetermineSystem.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeFindBinUtils.cmake"
-=======
-  "/usr/share/cmake-3.22/Modules/CMakeCXXInformation.cmake"
-  "/usr/share/cmake-3.22/Modules/CMakeCommonLanguageInclude.cmake"
->>>>>>> fb83dc3 (implemented git commit log)
   "/usr/share/cmake-3.22/Modules/CMakeGenericSystem.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeInitializeConfigs.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeLanguageInformation.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeParseArguments.cmake"
-<<<<<<< HEAD
   "/usr/share/cmake-3.22/Modules/CMakeParseImplicitIncludeInfo.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeParseImplicitLinkInfo.cmake"
   "/usr/share/cmake-3.22/Modules/CMakeParseLibraryArchitecture.cmake"
@@ -123,16 +117,6 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/usr/share/cmake-3.22/Modules/FindPkgConfig.cmake"
   "/usr/share/cmake-3.22/Modules/Internal/FeatureTesting.cmake"
   "/usr/share/cmake-3.22/Modules/Platform/Linux-Determine-CXX.cmake"
-=======
-  "/usr/share/cmake-3.22/Modules/CMakeSystemSpecificInformation.cmake"
-  "/usr/share/cmake-3.22/Modules/CMakeSystemSpecificInitialize.cmake"
-  "/usr/share/cmake-3.22/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
-  "/usr/share/cmake-3.22/Modules/Compiler/GNU-CXX.cmake"
-  "/usr/share/cmake-3.22/Modules/Compiler/GNU.cmake"
-  "/usr/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
-  "/usr/share/cmake-3.22/Modules/FindPackageMessage.cmake"
-  "/usr/share/cmake-3.22/Modules/FindPkgConfig.cmake"
->>>>>>> fb83dc3 (implemented git commit log)
   "/usr/share/cmake-3.22/Modules/Platform/Linux-GNU-CXX.cmake"
   "/usr/share/cmake-3.22/Modules/Platform/Linux-GNU.cmake"
   "/usr/share/cmake-3.22/Modules/Platform/Linux.cmake"
@@ -147,12 +131,9 @@ set(CMAKE_MAKEFILE_OUTPUTS
 
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
-<<<<<<< HEAD
   "CMakeFiles/3.22.1/CMakeSystem.cmake"
   "CMakeFiles/3.22.1/CMakeCXXCompiler.cmake"
   "CMakeFiles/3.22.1/CMakeCXXCompiler.cmake"
-=======
->>>>>>> fb83dc3 (implemented git commit log)
   "CMakeFiles/P2PGitProject_autogen.dir/AutogenInfo.json"
   "CMakeFiles/CMakeDirectoryInformation.cmake"
   )

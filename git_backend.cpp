@@ -5,7 +5,7 @@
 // Option 1: C++17 Filesystem (ensure CMAKE_CXX_STANDARD 17 is in CMakeLists.txt)
 #include <filesystem>
 // Option 2: Qt's QDir (if filesystem causes issues or you prefer Qt)
-// #include <QDir>
+#include <QDir>
 // #include <QString> // if using QDir
 
 GitBackend::GitBackend() {
@@ -151,4 +151,5 @@ std::vector<CommitInfo> GitBackend::getCommitLog(int limit, std::string& error_m
 
     git_revwalk_free(walker);
     return log;
+    #anmol
 }
