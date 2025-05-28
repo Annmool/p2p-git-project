@@ -59,6 +59,3 @@ latex/
 # CLion
 .idea/
 
-# Add any other specific files or directories you want to ignore below
-# For example, if you have a directory for test data you don't want to commit:
-# test_data_large/
