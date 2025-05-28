@@ -6,10 +6,12 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QVBoxLayout>
+#include <QHBoxLayout> // For horizontal layouts
 #include <QLabel>
-#include <QListWidget> // For displaying commit log
+#include <QComboBox>   // For branches
+#include <QSplitter>   // For resizable panes
 
-#include "git_backend.h" // Includes CommitInfo struct
+#include "git_backend.h" // This now includes the CommitInfo struct
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -25,22 +27,31 @@ public:
 private slots:
     void onInitRepoClicked();
     void onOpenRepoClicked();
-    void onRefreshLogClicked(); // Slot for refresh log button
+    void onRefreshLogClicked();
+    void onRefreshBranchesClicked();
+    void onCheckoutBranchClicked();
 
 private:
-    void updateRepositoryStatus();
-    void displayCommitLog(const std::vector<CommitInfo>& log); // Helper to populate QListWidget
+    void setupUi(); // Helper to organize UI creation
+    void updateRepositoryStatus(); // Updates UI based on open repo, loads log & branches
+    void loadCommitLog();        // Fetches and displays commit log
+    void loadBranchList();       // Fetches and displays branch list, updates current branch
 
     // UI Elements
     QLineEdit *repoPathInput;
     QPushButton *initRepoButton;
     QPushButton *openRepoButton;
     QLabel *currentRepoLabel;
+    QLabel *currentBranchLabel; // Label for current branch
 
-    QListWidget *commitLogWidget; // For displaying commit log
-    QPushButton *refreshLogButton; // Button to refresh the log
+    QTextEdit *commitLogDisplay;
+    QPushButton *refreshLogButton;
 
-    QTextEdit *messageLog; // General status messages
+    QComboBox *branchComboBox;
+    QPushButton *refreshBranchesButton;
+    QPushButton *checkoutBranchButton;
+
+    QTextEdit *messageLog; // For general status messages
 
     GitBackend gitBackend;
 };

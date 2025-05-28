@@ -2,17 +2,19 @@
 #define GIT_BACKEND_H
 
 #include <string>
-#include <vector>
-#include <git2.h> // Main libgit2 header
+#include <vector>  // For returning list of branches and commit log
+#include <git2.h>  // Main libgit2 header
 
-// Structure to hold commit information for the UI
+// Define CommitInfo struct within the header or in a common types header if it grows
 struct CommitInfo {
-    std::string oid_short; // Short OID string
+    std::string sha;
     std::string author_name;
     std::string author_email;
-    long long commit_time; // Unix timestamp
-    std::string summary;   // First line of commit message
+    std::string date; // Formatted date string
+    std::string summary;
+    // long long commit_time; // If you prefer raw timestamp
 };
+
 
 class GitBackend {
 public:
@@ -34,11 +36,17 @@ public:
     // Helper to get the path of the currently open repository
     std::string getCurrentRepositoryPath() const;
 
-    // Gets the commit log for the current branch of the open repository
-    // Returns a vector of CommitInfo. Vector is empty on error or if no commits.
-    // Sets error_message on failure.
-    std::vector<CommitInfo> getCommitLog(int limit, std::string& error_message);
+    // Fetches commit log
+    std::vector<CommitInfo> getCommitLog(int max_commits, std::string& error_message);
 
+    // Lists branch names (local branches by default)
+    std::vector<std::string> listBranches(std::string& error_message);
+
+    // Checks out the specified branch
+    bool checkoutBranch(const std::string& branch_name, std::string& error_message);
+
+    // Gets the name of the current branch
+    std::string getCurrentBranch(std::string& error_message);
 
 private:
     git_repository* m_currentRepo = nullptr; // Handle to the currently open repository
