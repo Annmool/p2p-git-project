@@ -171,17 +171,22 @@ void MainWindow::loadBranchList() {
     if (!gitBackend.isRepositoryOpen()) return;
 
     std::string error_message;
-    std::vector<std::string> branches = gitBackend.listBranches(error_message);
+    // Now using GitBackend::BranchType::ALL
+    std::vector<std::string> branches = gitBackend.listBranches(GitBackend::BranchType::ALL, error_message);
 
     if (!error_message.empty()) {
-        messageLog->append("<font color=\"red\">Error listing branches: " + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
+        // ... error handling ...
     } else {
         if (branches.empty()) {
-            messageLog->append("No local branches found in this repository.");
+            messageLog->append("No local or remote-tracking branches found in this repository.");
         }
-        for (const std::string& branch_name : branches) {
-            branchComboBox->addItem(QString::fromStdString(branch_name));
-        }
+        for (const std::string& branch_name_str : branches) {
+    QString branch_qstr = QString::fromStdString(branch_name_str);
+    if (branch_qstr.endsWith("/HEAD")) { // Simple check for refs like "origin/HEAD"
+        continue; // Skip adding it to the combo box
+    }
+    branchComboBox->addItem(branch_qstr);
+}
     }
 
     // Update current branch label and select in ComboBox
