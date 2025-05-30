@@ -6,7 +6,7 @@
 #include <QSplitter>  // Already included in .h but good practice if directly used
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent) {
+    : QMainWindow(parent),m_currentlyDisplayedLogBranch("") {
     setupUi(); // Call the new UI setup method
 
     // --- Connections ---
@@ -128,17 +128,59 @@ void MainWindow::updateRepositoryStatus() {
         QString path = QString::fromStdString(gitBackend.getCurrentRepositoryPath());
         currentRepoLabel->setText("Current Repository: " + QDir::toNativeSeparators(path));
         loadBranchList(); // This will also update currentBranchLabel
-        loadCommitLog();
+        loadCommitLog(); 
     } else {
         currentRepoLabel->setText("No repository open.");
         currentBranchLabel->setText("Branch: -");
         commitLogDisplay->clear();
         branchComboBox->clear();
         messageLog->append("No repository is open. Initialize or open one.");
+        m_currentlyDisplayedLogBranch = "";
+    }
+}
+
+void MainWindow::loadCommitLogForBranch(const std::string& branchName) {
+    commitLogDisplay->clear();
+    if (!gitBackend.isRepositoryOpen()) {
+        commitLogDisplay->setHtml("<i>No repository open.</i>");
+        return;
+    }
+    std::string error_message_log;
+    // Call getCommitLog with the specific branch name
+    std::vector<CommitInfo> log = gitBackend.getCommitLog(100, error_message_log, branchName);
+
+    QString titleBranchName = QString::fromStdString(branchName).toHtmlEscaped();
+    if (branchName.empty()){ // Should not happen if called with specific branch, but for safety
+        std::string currentBranchErr;
+        titleBranchName = QString::fromStdString(gitBackend.getCurrentBranch(currentBranchErr));
+        if (titleBranchName.isEmpty() || titleBranchName.contains("[")) titleBranchName = "Current HEAD";
+    }
+
+
+    if (!error_message_log.empty() && log.empty()) {
+        commitLogDisplay->setHtml("<font color=\"red\">Error loading commit log for <b>" + titleBranchName + "</b>: " + QString::fromStdString(error_message_log).toHtmlEscaped() + "</font>");
+    } else if (log.empty()) {
+        commitLogDisplay->setHtml("<i>No commits found for <b>" + titleBranchName + "</b>.</i>");
+    } else {
+        QString htmlLog;
+        htmlLog += "<h3>Commit History for: <b>" + titleBranchName + "</b></h3><hr/>";
+        for (const auto& entry : log) {
+            htmlLog += QString("<b>%1</b> - %2 <%3> (%4)<br/>")
+                           .arg(QString::fromStdString(entry.sha.substr(0, 7)))
+                           .arg(QString::fromStdString(entry.author_name).toHtmlEscaped())
+                           .arg(QString::fromStdString(entry.author_email).toHtmlEscaped())
+                           .arg(QString::fromStdString(entry.date));
+            htmlLog += QString("    %1<br/><hr/>")
+                           .arg(QString::fromStdString(entry.summary).toHtmlEscaped());
+        }
+        commitLogDisplay->setHtml(htmlLog);
     }
 }
 
 void MainWindow::loadCommitLog() {
+     m_currentlyDisplayedLogBranch = ""; // Ensure this is cleared as we are now showing HEAD's log
+    // Call the helper with an empty string for branchName to signify HEAD
+    loadCommitLogForBranch("");
     commitLogDisplay->clear(); // Clear previous log
     if (!gitBackend.isRepositoryOpen()) {
         commitLogDisplay->setHtml("<i>No repository open to display log.</i>");
@@ -263,8 +305,15 @@ void MainWindow::onOpenRepoClicked() {
 
 void MainWindow::onRefreshLogClicked() {
     if (gitBackend.isRepositoryOpen()) {
-        loadCommitLog();
-        messageLog->append("Commit log refreshed.");
+        if (!m_currentlyDisplayedLogBranch.empty()) {
+            // Refreshing the log for the specifically selected (likely remote) branch
+            messageLog->append("Refreshing commit log for: <b>" + QString::fromStdString(m_currentlyDisplayedLogBranch).toHtmlEscaped() + "</b>");
+            loadCommitLogForBranch(m_currentlyDisplayedLogBranch);
+        } else {
+            // Refreshing the log for the current HEAD
+            messageLog->append("Refreshing commit log for current HEAD.");
+            loadCommitLog(); // This loads for HEAD
+        }
     } else {
         messageLog->append("No repository open to refresh log.");
     }
@@ -284,20 +333,47 @@ void MainWindow::onCheckoutBranchClicked() {
         messageLog->append("<font color=\"red\">No repository open.</font>");
         return;
     }
-    if (branchComboBox->currentText().isEmpty()) {
-        messageLog->append("<font color=\"red\">No branch selected to checkout.</font>");
-        QMessageBox::warning(this, "Checkout Error", "No branch selected from the dropdown.");
+    QString selectedBranchQStr = branchComboBox->currentText();
+    if (selectedBranchQStr.isEmpty()) {
+        messageLog->append("<font color=\"red\">No branch selected.</font>");
+        QMessageBox::warning(this, "Action Error", "No branch selected from the dropdown.");
         return;
     }
 
-    std::string branch_name = branchComboBox->currentText().toStdString();
-    std::string error_message;
+    std::string selectedBranchName = selectedBranchQStr.toStdString();
+    std::string error_message_op; 
 
-    if (gitBackend.checkoutBranch(branch_name, error_message)) {
-        messageLog->append("<font color=\"green\">" + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
-        updateRepositoryStatus(); // This will reload branches (and current branch) and log
+    std::string error_msg_local_list;
+    std::vector<std::string> local_branches = gitBackend.listBranches(GitBackend::BranchType::LOCAL, error_msg_local_list);
+    bool is_actually_local_branch = false;
+    if (error_msg_local_list.empty()) {
+        for (const auto& local_b : local_branches) {
+            if (local_b == selectedBranchName) {
+                is_actually_local_branch = true;
+                break;
+            }
+        }
     } else {
-        messageLog->append("<font color=\"red\">Error checking out branch '" + QString::fromStdString(branch_name).toHtmlEscaped() + "': " + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
-        QMessageBox::critical(this, "Checkout Failed", "Could not checkout branch: " + QString::fromStdString(branch_name) + "\nError: " + QString::fromStdString(error_message));
+        messageLog->append("<font color=\"orange\">Warning: Could not list local branches to determine type: " + QString::fromStdString(error_msg_local_list) + "</font>");
+        // Fallback heuristic: if it doesn't contain '/', assume local.
+        // This is less reliable but a fallback.
+        is_actually_local_branch = (selectedBranchName.find('/') == std::string::npos);
+    }
+
+    if (is_actually_local_branch) {
+        // For local branches: Perform a full checkout.
+        if (gitBackend.checkoutBranch(selectedBranchName, error_message_op)) {
+            messageLog->append("<font color=\"green\">" + QString::fromStdString(error_message_op).toHtmlEscaped() + "</font>");
+            m_currentlyDisplayedLogBranch = ""; // Log will now be for HEAD
+            updateRepositoryStatus(); // This reloads log for new HEAD, branches, current branch label
+        } else {
+            messageLog->append("<font color=\"red\">Error checking out branch '" + selectedBranchQStr.toHtmlEscaped() + "': " + QString::fromStdString(error_message_op).toHtmlEscaped() + "</font>");
+            QMessageBox::critical(this, "Checkout Failed", "Could not checkout branch: " + selectedBranchQStr + "\nError: " + QString::fromStdString(error_message_op));
+        }
+    } else {
+        // For remote-tracking (or non-local) branches: Just load its commit log. Do not change HEAD.
+        messageLog->append("Displaying commit history for: <b>" + selectedBranchQStr.toHtmlEscaped() + "</b> (Current HEAD unchanged)");
+        loadCommitLogForBranch(selectedBranchName);
+        m_currentlyDisplayedLogBranch = selectedBranchName; // Track that we are showing log for this specific ref
     }
 }

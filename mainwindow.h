@@ -35,7 +35,9 @@ private:
     void setupUi(); // Helper to organize UI creation
     void updateRepositoryStatus(); // Updates UI based on open repo, loads log & branches
     void loadCommitLog();        // Fetches and displays commit log
-    void loadBranchList();       // Fetches and displays branch list, updates current branch
+    void loadBranchList();      // Fetches and displays branch list, updates current branch
+    void loadCommitLogForBranch(const std::string& branchName); // New helper
+    std::string m_currentlyDisplayedLogBranch; 
 
     // UI Elements
     QLineEdit *repoPathInput;

@@ -2,62 +2,45 @@
 #define GIT_BACKEND_H
 
 #include <string>
-#include <vector>  // For returning list of branches and commit log
-#include <git2.h>  // Main libgit2 header
+#include <vector>
+#include <git2.h>
 
-// Define CommitInfo struct within the header or in a common types header if it grows
+// Define CommitInfo struct
 struct CommitInfo {
     std::string sha;
     std::string author_name;
     std::string author_email;
     std::string date; // Formatted date string
     std::string summary;
-    // long long commit_time; // If you prefer raw timestamp
 };
-
 
 class GitBackend {
 public:
-
+    // Enum to specify which types of branches to list
     enum class BranchType {
-            LOCAL = GIT_BRANCH_LOCAL,
-            REMOTE = GIT_BRANCH_REMOTE,
-            ALL = GIT_BRANCH_ALL
-        };
+        LOCAL = GIT_BRANCH_LOCAL,
+        REMOTE = GIT_BRANCH_REMOTE,
+        ALL = GIT_BRANCH_ALL
+    };
 
     GitBackend();
     ~GitBackend();
 
-    // Initializes a new Git repository at the given path
     bool initializeRepository(const std::string& path, std::string& error_message);
-
-    // Opens an existing Git repository at the given path
     bool openRepository(const std::string& path, std::string& error_message);
-
-    // Closes the currently open repository, if any
     void closeRepository();
-
-    // Helper to check if a repository is currently open
     bool isRepositoryOpen() const;
-
-    // Helper to get the path of the currently open repository
     std::string getCurrentRepositoryPath() const;
 
-    // Fetches commit log
-    std::vector<CommitInfo> getCommitLog(int max_commits, std::string& error_message);
-
-    // Lists branch names (local branches by default)
+    std::vector<CommitInfo> getCommitLog(int max_commits, std::string& error_message, const std::string& specific_ref_name_or_sha = "");
     std::vector<std::string> listBranches(BranchType type, std::string& error_message);
-
-    // Checks out the specified branch
     bool checkoutBranch(const std::string& branch_name, std::string& error_message);
-
-    // Gets the name of the current branch
     std::string getCurrentBranch(std::string& error_message);
 
 private:
     git_repository* m_currentRepo = nullptr;
     std::string m_currentRepoPath;
+
     void freeCurrentRepo();
 };
 
