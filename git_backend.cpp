@@ -90,6 +90,20 @@ std::vector<CommitInfo> GitBackend::getCommitLog(int max_commits, std::string& e
         return log_entries;
     }
 
+    int is_unborn = git_repository_head_unborn(m_currentRepo);
+    if (is_unborn < 0) { // Error checking unborn status itself
+        const git_error *e = git_error_last();
+        error_message = "Failed to check repository HEAD state: ";
+        error_message += (e && e->message) ? e->message : "Unknown error";
+        return log_entries;
+    }
+    if (is_unborn == 1) { // HEAD is unborn, meaning no commits yet
+        // No error message needed here if you want the UI to just show "No commits"
+        // Or, you can set a specific informational message:
+        // error_message = "Repository is empty. Make your first commit!";
+        return log_entries; // Return an empty log, no commits to walk
+    }
+
     git_revwalk *walk = nullptr;
     git_commit *commit = nullptr;
     git_oid oid;
@@ -103,10 +117,10 @@ std::vector<CommitInfo> GitBackend::getCommitLog(int max_commits, std::string& e
 
     git_revwalk_sorting(walk, GIT_SORT_TIME | GIT_SORT_TOPOLOGICAL); // Sort by time (newest first usually) and topology
 
-    if (git_revwalk_push_head(walk) != 0) { // Start from HEAD
+    if (git_revwalk_push_head(walk) != 0) {
         const git_error *e = git_error_last();
-        error_message = "Failed to push HEAD to revwalk (possibly empty repo): ";
-         error_message += (e && e->message) ? e->message : "Unknown error";
+        error_message = "Failed to push HEAD to revwalk: "; // Simpler message now
+        error_message += (e && e->message) ? e->message : "Unknown error";
         git_revwalk_free(walk);
         return log_entries;
     }
@@ -164,13 +178,13 @@ std::vector<CommitInfo> GitBackend::getCommitLog(int max_commits, std::string& e
     git_revwalk_free(walk);
 
     if (log_entries.empty() && count == 0 && error_message.empty()) {
-        error_message = "No commits found in current branch.";
+        error_message = "No commits found in current branch/HEAD.";
     }
 
     return log_entries;
 }
 
-std::vector<std::string> GitBackend::listBranches(std::string& error_message) {
+std::vector<std::string> GitBackend::listBranches(BranchType type, std::string& error_message) {
     std::vector<std::string> branches;
     error_message.clear();
     if (!isRepositoryOpen()) {
@@ -179,7 +193,8 @@ std::vector<std::string> GitBackend::listBranches(std::string& error_message) {
     }
 
     git_branch_iterator *it = nullptr;
-    if (git_branch_iterator_new(&it, m_currentRepo, GIT_BRANCH_LOCAL) != 0) {
+    // Use the passed 'type' to determine which branches to iterate over
+    if (git_branch_iterator_new(&it, m_currentRepo, static_cast<git_branch_t>(type)) != 0) {
         const git_error *e = git_error_last();
         error_message = "Failed to create branch iterator: ";
         error_message += (e && e->message) ? e->message : "Unknown error";
@@ -187,13 +202,14 @@ std::vector<std::string> GitBackend::listBranches(std::string& error_message) {
     }
 
     git_reference *ref = nullptr;
-    git_branch_t branch_type; // Not strictly used here but required by git_branch_next
+    git_branch_t iterated_branch_type; // To store the type of branch found
     const char *branch_name_utf8 = nullptr;
 
     int error;
-    while ((error = git_branch_next(&ref, &branch_type, it)) == 0) {
+    while ((error = git_branch_next(&ref, &iterated_branch_type, it)) == 0) {
         if (git_branch_name(&branch_name_utf8, ref) == 0) {
             branches.push_back(branch_name_utf8);
+        } else {
         }
         git_reference_free(ref);
         ref = nullptr;
