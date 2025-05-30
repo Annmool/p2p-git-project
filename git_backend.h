@@ -18,6 +18,13 @@ struct CommitInfo {
 
 class GitBackend {
 public:
+
+    enum class BranchType {
+            LOCAL = GIT_BRANCH_LOCAL,
+            REMOTE = GIT_BRANCH_REMOTE,
+            ALL = GIT_BRANCH_ALL
+        };
+
     GitBackend();
     ~GitBackend();
 
@@ -40,7 +47,7 @@ public:
     std::vector<CommitInfo> getCommitLog(int max_commits, std::string& error_message);
 
     // Lists branch names (local branches by default)
-    std::vector<std::string> listBranches(std::string& error_message);
+    std::vector<std::string> listBranches(BranchType type, std::string& error_message);
 
     // Checks out the specified branch
     bool checkoutBranch(const std::string& branch_name, std::string& error_message);
@@ -49,10 +56,8 @@ public:
     std::string getCurrentBranch(std::string& error_message);
 
 private:
-    git_repository* m_currentRepo = nullptr; // Handle to the currently open repository
-    std::string m_currentRepoPath;           // Path of the currently open repository
-
-    // Private helper to free the repository if it's open
+    git_repository* m_currentRepo = nullptr;
+    std::string m_currentRepoPath;
     void freeCurrentRepo();
 };
 
