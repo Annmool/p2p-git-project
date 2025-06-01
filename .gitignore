@@ -1,0 +1,61 @@
+# CMake / Build output
+build/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile # If Makefiles are generated in the root, though usually in build/
+*.cbp # Code::Blocks project file (if anyone uses it)
+*.xcodeproj/ # Xcode project
+*.sln # Visual Studio Solution
+*.suo # Visual Studio User Options
+
+# Qt Creator / Qt specific
+*.pro.user*
+*.pro.shared
+*.qbs.user
+*.autosave
+*.creator.user
+*.creator.user.wal
+QtCreator.db
+*.qm # Compiled translation files (if you add translations later)
+moc_*.cpp # Generated MOC files (usually in build/ but sometimes can appear elsewhere if misconfigured)
+ui_*.h   # Generated UI files (usually in build/)
+qrc_*.cpp # Generated resource files (usually in build/)
+
+# Compiled C++ object files and libraries (usually in build/)
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.exe # If you ever compile on Windows
+
+# Backup & Swap files
+*~
+*.swp
+*.swo
+*.swn
+*.bak
+*.tmp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Ccache
+.ccache/
+
+# Doxygen documentation output (if you use Doxygen later)
+DoxygenLogfile.txt
+html/
+latex/
+
+# VS Code
+.vscode/
+
+# CLion
+.idea/
+
