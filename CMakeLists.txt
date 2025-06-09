@@ -15,6 +15,7 @@ find_package(Qt5 REQUIRED COMPONENTS Network)
 # --- Use PkgConfig to find LibGit2 ---
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GIT2 REQUIRED libgit2)
+pkg_check_modules(SODIUM REQUIRED libsodium) 
 
 # --- Define Your Executable Target ---
 add_executable(${PROJECT_NAME}
@@ -22,10 +23,14 @@ add_executable(${PROJECT_NAME}
     mainwindow.cpp
     git_backend.cpp
     network_manager.cpp # Ensure this is added
+    identity_manager.cpp
 )
 
 # --- Include Directories (especially for LibGit2) ---
-include_directories(${GIT2_INCLUDE_DIRS})
+include_directories(
+    ${GIT2_INCLUDE_DIRS}
+    ${SODIUM_LIBRARIES} #
+    )
 # Qt5 include directories are typically handled by linking Qt5::Widgets and Qt5::Network
 
 # --- Link Libraries to the Defined Target ---
@@ -33,6 +38,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt5::Widgets 
     Qt5::Network
     ${GIT2_LIBRARIES}
+    ${SODIUM_LIBRARIES} #
 )
 
 # If using std::filesystem and linking fails on your specific GCC setup
