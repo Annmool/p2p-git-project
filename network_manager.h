@@ -9,87 +9,105 @@
 #include <QList>
 #include <QTimer>
 #include <QMap>
-
-// Forward declaration if IdentityManager is complex or to avoid include here,
-// but including is fine for now as it's not a huge header.
-#include "identity_manager.h" // <<< ENSURE THIS IS PRESENT
+#include "identity_manager.h" // Include IdentityManager
 
 struct DiscoveredPeerInfo {
-    QString id;
+    QString id; // This will be the username
     QHostAddress address;
     quint16 tcpPort;
+    QString publicKeyHex; // Store discovered public key
     qint64 lastSeen;
-    // QString publicKeyHex; // Optional: Add if you want to pass it around with discovered info
 };
 
 class NetworkManager : public QObject {
     Q_OBJECT
 
 public:
-    // <<< CORRECTED CONSTRUCTOR DECLARATION >>>
-    explicit NetworkManager(IdentityManager* idMgr, QObject *parent = nullptr);
+    // Username is for display/discovery, IdentityManager handles crypto keys
+    explicit NetworkManager(const QString& myUsername, IdentityManager* identityManager, QObject *parent = nullptr);
     ~NetworkManager();
 
-    // ... (rest of public methods: startTcpServer, stopTcpServer, etc. ... ALL THE METHODS FROM BEFORE)
+    // TCP Server
     bool startTcpServer(quint16 port = 0);
     void stopTcpServer();
     quint16 getTcpServerPort() const;
-    bool connectToTcpPeer(const QHostAddress& hostAddress, quint16 port, const QString& expectedPeerId = "");
-    void disconnectFromTcpPeer(QTcpSocket* peerSocket);
-    void disconnectAllTcpPeers();
+
+    // TCP Client
+    bool connectToTcpPeer(const QHostAddress& hostAddress, quint16 port, const QString& expectedPeerUsername);
+    void disconnectAllTcpPeers(); // Disconnects all active TCP sockets
     bool hasActiveTcpConnections() const;
-    bool startUdpDiscovery(quint16 udpPort = 45454, const QString& myDisplayName = "DefaultPeer");
+
+    // UDP Discovery
+    bool startUdpDiscovery(quint16 udpPort = 45454);
     void stopUdpDiscovery();
-    void sendDiscoveryBroadcast();
-    void sendMessageToPeer(QTcpSocket* peerSocket, const QString& message);
-    void broadcastTcpMessage(const QString& message);
+    void sendDiscoveryBroadcast(); // Broadcasts presence
+
+    // TCP Messaging
+    void sendMessageToPeer(QTcpSocket* peerSocket, const QString& message); // <<< THIS IS NOW PUBLIC
+    void broadcastTcpMessage(const QString& message); // Sends to all fully connected peers
+
+    // Connection Approval (called by UI)
     void acceptPendingTcpConnection(QTcpSocket* pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket* pendingSocket);
 
-
 signals:
-    // ... (ALL THE SIGNALS FROM BEFORE) ...
-    void incomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port);
-    void newTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerId);
-    void tcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerId);
-    void tcpMessageReceived(QTcpSocket* peerSocket, const QString& peerId, const QString& message);
+    // Emitted when a TCP connection is requested by a remote peer, UI should ask user
+    void incomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
+    // Emitted after TCP connection is established AND identity handshake is complete
+    void newTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex);
+    // Emitted when a fully connected peer disconnects
+    void tcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerUsername);
+    // Emitted when a chat message is received from a peer
+    void tcpMessageReceived(QTcpSocket* peerSocket, const QString& peerUsername, const QString& message);
+    // Emitted when TCP server starts/stops or errors
     void tcpServerStatusChanged(bool listening, quint16 port, const QString& error = "");
-    void tcpConnectionStatusChanged(const QString& peerId, bool connected, const QString& error = "");
+    // Emitted for status of an outgoing TCP connection attempt (before ID handshake completes)
+    void tcpConnectionStatusChanged(const QString& peerUsernameOrAddress, const QString& peerPublicKeyHex, bool connected, const QString& error = "");
+
+    // Emitted when a peer is found via UDP or its info is updated
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
-    void lanPeerLost(const QString& peerId);
+    // Emitted when a discovered peer times out
+    void lanPeerLost(const QString& peerUsername);
 
 private slots:
-    // ... (ALL THE PRIVATE SLOTS FROM BEFORE) ...
-    void onNewTcpConnection();
+    // TCP Server
+    void onNewTcpConnection(); // Handles incoming connection attempts
+
+    // TCP Sockets (for both server-accepted clients and outgoing connections)
     void onTcpSocketStateChanged(QAbstractSocket::SocketState socketState);
-    void onTcpSocketReadyRead();
-    void onTcpSocketDisconnected();
-    void onTcpSocketError(QAbstractSocket::SocketError socketError);
-    void onUdpReadyRead();
-    void onBroadcastTimerTimeout();
-    void onPeerCleanupTimerTimeout();
-    void onPendingConnectionTimeout();
+    void onTcpSocketReadyRead();    // Data received on a TCP socket
+    void onTcpSocketDisconnected(); // A TCP socket disconnected
+    void onTcpSocketError(QAbstractSocket::SocketError socketError); // Error on a TCP socket
+
+    // UDP Discovery
+    void onUdpReadyRead();          // UDP datagram received
+    void onBroadcastTimerTimeout(); // Time to send another UDP presence broadcast
+    void onPeerCleanupTimerTimeout(); // Time to check for stale discovered peers
+    // Note: onPendingConnectionTimeout is handled by a lambda in onNewTcpConnection
 
 private:
-    // ... (m_tcpServer, m_allTcpSockets, m_socketToPeerIdMap, m_udpSocket, etc. ... ALL OTHER PRIVATE MEMBERS) ...
+    // TCP Members
     QTcpServer* m_tcpServer = nullptr;
-    QList<QTcpSocket*> m_allTcpSockets;
-    QMap<QTcpSocket*, QString> m_socketToPeerIdMap;
+    QList<QTcpSocket*> m_allTcpSockets; // Unified list of all active (post-handshake) TCP sockets
+    QMap<QTcpSocket*, QString> m_socketToPeerUsernameMap; // Socket -> Confirmed Username
+    QMap<QTcpSocket*, QTimer*> m_pendingConnections; // Sockets awaiting user approval & their timeout timers
+
+    // Identity & UDP Discovery Members
+    QString m_myUsername;               // User-friendly name for this instance
+    IdentityManager* m_identityManager; // Manages cryptographic keys (owned by MainWindow)
+    QMap<QString, QString> m_peerPublicKeys; // Username -> PublicKeyHex (for connected peers)
+
     QUdpSocket* m_udpSocket = nullptr;
     quint16 m_udpDiscoveryPort;
     QTimer* m_broadcastTimer = nullptr;
     QTimer* m_peerCleanupTimer = nullptr;
-    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
-    QMap<QTcpSocket*, QTimer*> m_pendingConnections;
+    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers; // Username -> DiscoveredPeerInfo
 
-    // <<< THESE MEMBERS MUST BE DECLARED >>>
-    IdentityManager* m_identityManager;
-    QString m_myDisplayName; // To store the display name for broadcasts
-
-    QString getPeerIdentifierForSocket(QTcpSocket* socket);
-    void processIncomingTcpData(QTcpSocket* socket, const QByteArray& data);
-    void sendIdentityOverTcp(QTcpSocket* socket);
-    void setupAcceptedSocket(QTcpSocket* socket);
+    // Helper Methods
+    QString getPeerDisplayString(QTcpSocket* socket); // For logging and pre-handshake identification
+    void processIncomingTcpData(QTcpSocket* socket, const QByteArray& data); // Parses TCP messages
+    void sendIdentityOverTcp(QTcpSocket* socket); // Sends username and public key
+    void setupAcceptedSocket(QTcpSocket* socket); // Finalizes setup for an accepted TCP socket
 };
 
 #endif // NETWORK_MANAGER_H

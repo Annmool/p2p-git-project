@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+// Individual includes for Qt classes:
 #include <QPushButton>
 #include <QLineEdit>
 #include <QTextEdit>
@@ -10,14 +11,19 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QSplitter>
-#include <QListWidget>     // For connected peers list
-#include <QFrame>          // For grouping network controls
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QFrame>
 #include <QInputDialog>
-#include <QTcpSocket>      // For slot parameters
+#include <QTcpSocket>
+#include <QHostAddress>
+#include <QHostInfo>
+#include <QCryptographicHash>
+#include <QRandomGenerator>
 
-#include "git_backend.h"
+#include "git_backend.h"     // Includes CommitInfo struct
 #include "network_manager.h" // Includes DiscoveredPeerInfo
-#include "identity_manager.h"// For IdentityManager member
+#include "identity_manager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -31,22 +37,29 @@ public:
     ~MainWindow();
 
 private slots:
+    // Git
     void onInitRepoClicked();
     void onOpenRepoClicked();
     void onRefreshLogClicked();
     void onRefreshBranchesClicked();
     void onCheckoutBranchClicked();
+
+    // Network - Control
     void onToggleDiscoveryAndTcpServerClicked();
+
+    // Network - Actions
     void onDiscoveredPeerDoubleClicked(QListWidgetItem* item);
     void onSendMessageClicked();
+
+    // NetworkManager Signal Handlers
     void handleTcpServerStatusChanged(bool listening, quint16 port, const QString& error);
-    void handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port);
-    void handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerId);
-    void handleTcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerId);
-    void handleTcpMessageReceived(QTcpSocket* peerSocket, const QString& peerId, const QString& message);
-    void handleTcpConnectionStatusChanged(const QString& peerId, bool connected, const QString& error);
+    void handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
+    void handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex);
+    void handleTcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerUsername);
+    void handleTcpMessageReceived(QTcpSocket* peerSocket, const QString& peerUsername, const QString& message);
+    void handleTcpConnectionStatusChanged(const QString& peerUsername, const QString& peerPublicKeyHex, bool connected, const QString& error);
     void handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
-    void handleLanPeerLost(const QString& peerId);
+    void handleLanPeerLost(const QString& peerUsername);
 
 private:
     void setupUi();
@@ -55,21 +68,36 @@ private:
     void loadBranchList();
     void loadCommitLogForBranch(const std::string& branchName);
     std::string m_currentlyDisplayedLogBranch;
-    QString m_myPeerName;
+    QString m_myUsername;
 
-    QLineEdit *repoPathInput; QPushButton *initRepoButton; QPushButton *openRepoButton;
-    QLabel *currentRepoLabel; QLabel *currentBranchLabel; QTextEdit *commitLogDisplay;
-    QPushButton *refreshLogButton; QComboBox *branchComboBox; QPushButton *refreshBranchesButton;
-    QPushButton *checkoutBranchButton; QTextEdit *messageLog;
+    // UI Elements - Git
+    QLineEdit *repoPathInput;
+    QPushButton *initRepoButton;
+    QPushButton *openRepoButton;
+    QLabel *currentRepoLabel;
+    QLabel *currentBranchLabel;
+    QTextEdit *commitLogDisplay;
+    QPushButton *refreshLogButton;
+    QComboBox *branchComboBox;
+    QPushButton *refreshBranchesButton;
+    QPushButton *checkoutBranchButton;
+    QTextEdit *messageLog;
 
-    QFrame* networkFrame; QLineEdit* myPeerNameInput; QPushButton* toggleDiscoveryButton;
-    QLabel* tcpServerStatusLabel; QListWidget* discoveredPeersList;
-    QListWidget* connectedTcpPeersList; QLineEdit* messageInput;
-    QPushButton* sendMessageButton; QTextEdit* networkLogDisplay;
+    // UI Elements - Network
+    QFrame* networkFrame;
+    QLabel* myPeerInfoLabel;
+    QPushButton* toggleDiscoveryButton;
+    QLabel* tcpServerStatusLabel;
+    QListWidget* discoveredPeersList;
+    QListWidget* connectedTcpPeersList;
+    QLineEdit* messageInput;
+    QPushButton* sendMessageButton;
+    QTextEdit* networkLogDisplay;
 
-    GitBackend gitBackend;
-    IdentityManager identityManager; // Declare IdentityManager
-    NetworkManager networkManager;   // Declare NetworkManager ONCE
+    // Backend/Manager Instances
+    GitBackend gitBackend;                 // Can remain a value member if simple to init
+    IdentityManager* m_identityManager_ptr; // <<< NOW A POINTER
+    NetworkManager*  m_networkManager_ptr;  // <<< NOW A POINTER
 };
 
 #endif // MAINWINDOW_H

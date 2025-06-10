@@ -8,45 +8,38 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # --- Find Packages ---
-# Using the two separate find_package calls that worked for you
-find_package(Qt5 REQUIRED COMPONENTS Widgets) 
-find_package(Qt5 REQUIRED COMPONENTS Network) 
+find_package(Qt5 REQUIRED COMPONENTS Widgets Network) 
+# find_package(Qt5 REQUIRED COMPONENTS Network) # This line is commented out, which is fine if the combined one works
 
-# --- Use PkgConfig to find LibGit2 ---
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GIT2 REQUIRED libgit2)
-pkg_check_modules(SODIUM REQUIRED libsodium) 
+pkg_check_modules(SODIUM REQUIRED libsodium) # For libsodium
 
 # --- Define Your Executable Target ---
 add_executable(${PROJECT_NAME}
     main.cpp
     mainwindow.cpp
     git_backend.cpp
-    network_manager.cpp # Ensure this is added
-    identity_manager.cpp
-)
+    network_manager.cpp
+    identity_manager.cpp 
+) # <--- CORRECTED TO A CLOSING PARENTHESIS
 
-# --- Include Directories (especially for LibGit2) ---
-include_directories(
-    ${GIT2_INCLUDE_DIRS}
-    ${SODIUM_LIBRARIES} #
-    )
-# Qt5 include directories are typically handled by linking Qt5::Widgets and Qt5::Network
+# --- Include Directories ---
+include_directories(${GIT2_INCLUDE_DIRS})
+include_directories(${SODIUM_INCLUDE_DIRS}) # Add libsodium includes
+# Qt5 include directories are usually handled by linking targets
 
 # --- Link Libraries to the Defined Target ---
 target_link_libraries(${PROJECT_NAME} PRIVATE 
     Qt5::Widgets 
     Qt5::Network
     ${GIT2_LIBRARIES}
-    ${SODIUM_LIBRARIES} #
+    ${SODIUM_LIBRARIES} # Link libsodium
 )
 
-# If using std::filesystem and linking fails on your specific GCC setup
-# (e.g. "undefined reference to std::filesystem::...")
-# you might need to add stdc++fs. Test without it first.
-# On GCC 9+ with CMAKE_CXX_STANDARD 17, it's often not needed.
+# Optional: Link stdc++fs if std::filesystem causes issues on your compiler
 # if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG)
-#   if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0") # Example for GCC < 9
+#   if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0") # Example for older GCC
 #     target_link_libraries(${PROJECT_NAME} PRIVATE stdc++fs)
 #   endif()
 # endif()
