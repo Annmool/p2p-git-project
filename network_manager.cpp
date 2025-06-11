@@ -3,31 +3,47 @@
 #include <QDataStream>
 #include <QDateTime>
 #include <QDebug>
+#include <QUuid> 
+
 
 const qint64 PEER_TIMEOUT_MS = 15000;
 const int BROADCAST_INTERVAL_MS = 5000;
 const int PENDING_CONNECTION_TIMEOUT_MS = 30000;
 
-NetworkManager::NetworkManager(const QString& myUsername, IdentityManager* identityManager, QObject *parent)
+NetworkManager::NetworkManager(const QString& myUsername,
+                               IdentityManager* identityManager,
+                               RepositoryManager* repoManager, // <<< NEW PARAMETER
+                               QObject *parent)
     : QObject(parent),
       m_myUsername(myUsername),
-      m_identityManager(identityManager) // Store pointer to IdentityManager
+      m_identityManager(identityManager),
+      m_repoManager_ptr(repoManager) // <<< STORE REPO MANAGER
 {
     if (!m_identityManager || !m_identityManager->areKeysInitialized()) {
         qCritical() << "NetworkManager: CRITICAL - IdentityManager not provided or keys not initialized!";
-        // Consider disabling network functions or throwing
+    }
+    if (!m_repoManager_ptr) {
+        qCritical() << "NetworkManager: CRITICAL - RepositoryManager not provided!";
     }
 
+    // TCP Server
     m_tcpServer = new QTcpServer(this);
     connect(m_tcpServer, &QTcpServer::newConnection, this, &NetworkManager::onNewTcpConnection);
+
+    // UDP Socket
     m_udpSocket = new QUdpSocket(this);
     connect(m_udpSocket, &QUdpSocket::readyRead, this, &NetworkManager::onUdpReadyRead);
+
+    // Broadcast Timer
     m_broadcastTimer = new QTimer(this);
     connect(m_broadcastTimer, &QTimer::timeout, this, &NetworkManager::onBroadcastTimerTimeout);
+
+    // Peer Cleanup Timer
     m_peerCleanupTimer = new QTimer(this);
     connect(m_peerCleanupTimer, &QTimer::timeout, this, &NetworkManager::onPeerCleanupTimerTimeout);
     m_peerCleanupTimer->start(PEER_TIMEOUT_MS / 2);
 }
+
 
 NetworkManager::~NetworkManager() {
     stopTcpServer();
@@ -84,9 +100,9 @@ bool NetworkManager::hasActiveTcpConnections() const { return !m_allTcpSockets.i
 
 // --- UDP Discovery --- (startUdpDiscovery, stopUdpDiscovery, sendDiscoveryBroadcast, onUdpReadyRead, onBroadcastTimerTimeout, onPeerCleanupTimerTimeout - modified for IdentityManager)
 bool NetworkManager::startUdpDiscovery(quint16 udpPort) {
-    m_udpDiscoveryPort = udpPort;
-    if (!m_identityManager || m_identityManager->getMyPublicKeyHex().empty()) { // Check if keys are ready
-        qWarning() << "NM: Cannot start UDP discovery, identity not ready (no public key).";
+     m_udpDiscoveryPort = udpPort;
+    if (!m_identityManager || m_identityManager->getMyPublicKeyHex().empty() || !m_repoManager_ptr) {
+        qWarning() << "NM: Cannot start UDP discovery, identity or repo manager not ready.";
         return false;
     }
     if (m_udpSocket->state() == QAbstractSocket::BoundState) { if(!m_broadcastTimer->isActive()) m_broadcastTimer->start(BROADCAST_INTERVAL_MS); return true; }
@@ -98,32 +114,89 @@ bool NetworkManager::startUdpDiscovery(quint16 udpPort) {
 void NetworkManager::stopUdpDiscovery() { /* ... same ... */ m_broadcastTimer->stop(); if(m_udpSocket->state()!=QAbstractSocket::UnconnectedState) m_udpSocket->close(); m_discoveredPeers.clear(); }
 
 void NetworkManager::sendDiscoveryBroadcast() {
-    if (!m_tcpServer || !m_tcpServer->isListening() || m_myUsername.isEmpty() || !m_identityManager || m_identityManager->getMyPublicKeyHex().empty()) {
-        qDebug() << "NM: Cannot send UDP broadcast. TCP server/MyUsername/PublicKey not ready."; return;
+    if (!m_tcpServer || !m_tcpServer->isListening() || m_myUsername.isEmpty() ||
+        !m_identityManager || m_identityManager->getMyPublicKeyHex().empty() || !m_repoManager_ptr) {
+        qDebug() << "NM: Cannot send UDP broadcast. Requirements not met (TCP server, Username, PubKey, RepoManager).";
+        return;
     }
-    QByteArray datagram; QDataStream out(&datagram, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_5_15);
-    QString magicHeader = "P2PGIT_DISCOVERY_V2"; quint16 tcpPort = m_tcpServer->serverPort();
+
+    QByteArray datagram;
+    QDataStream out(&datagram, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_5_15); // Ensure consistent Qt version for QDataStream
+
+    QString magicHeader = "P2PGIT_DISCOVERY_V3"; // New packet version
+    quint16 tcpPort = m_tcpServer->serverPort();
     QString myPublicKeyHex = QString::fromStdString(m_identityManager->getMyPublicKeyHex());
-    out << magicHeader << m_myUsername << tcpPort << myPublicKeyHex;
+
+    QList<ManagedRepositoryInfo> publicRepos = m_repoManager_ptr->getMyPubliclySharedRepositories();
+    QList<QString> publicRepoNames;
+    for(const auto& repoInfo : publicRepos) {
+        publicRepoNames.append(repoInfo.displayName); // Send display names
+        // Or send repoInfo.appId if you prefer to use IDs for requests later
+    }
+
+    out << magicHeader << m_myUsername << tcpPort << myPublicKeyHex << publicRepoNames; // Added publicRepoNames
+
     m_udpSocket->writeDatagram(datagram, QHostAddress::Broadcast, m_udpDiscoveryPort);
-    // qDebug() << "NM: Sent UDP V2 broadcast for" << m_myUsername << "PubKey:" << myPublicKeyHex.left(8);
+    // qDebug() << "NM: Sent UDP V3 broadcast for" << m_myUsername << "PK:" << myPublicKeyHex.left(8) << "Repos:" << publicRepoNames;
 }
 
 void NetworkManager::onUdpReadyRead() {
     while (m_udpSocket->hasPendingDatagrams()) {
-        QByteArray datagram; datagram.resize(m_udpSocket->pendingDatagramSize()); QHostAddress senderAddress; quint16 senderUdpPort;
+        QByteArray datagram;
+        datagram.resize(int(m_udpSocket->pendingDatagramSize())); // Cast to int for resize
+        QHostAddress senderAddress;
+        quint16 senderUdpPort; // Port the UDP packet came from, not their TCP port
+
         m_udpSocket->readDatagram(datagram.data(), datagram.size(), &senderAddress, &senderUdpPort);
-        QDataStream in(&datagram, QIODevice::ReadOnly); in.setVersion(QDataStream::Qt_5_15);
-        QString magicHeader, receivedUsername, receivedPublicKeyHex; quint16 receivedTcpPort;
+
+        QDataStream in(&datagram, QIODevice::ReadOnly);
+        in.setVersion(QDataStream::Qt_5_15);
+
+        QString magicHeader, receivedUsername, receivedPublicKeyHex;
+        quint16 receivedTcpPort;
+        QList<QString> receivedPublicRepoNames; // For V3
+
         in >> magicHeader;
-        if (magicHeader == "P2PGIT_DISCOVERY_V2") {
+        if (in.status() != QDataStream::Ok) { qDebug() << "NM: UDP - Error reading magic header."; continue; }
+
+
+        if (magicHeader == "P2PGIT_DISCOVERY_V3") {
+            in >> receivedUsername >> receivedTcpPort >> receivedPublicKeyHex >> receivedPublicRepoNames;
+            if (in.status() == QDataStream::Ok && !receivedUsername.isEmpty() && 
+                !receivedPublicKeyHex.isEmpty() && receivedUsername != m_myUsername) {
+                // qDebug() << "NM: Received UDP V3 from" << receivedUsername << "@" << senderAddress.toString() 
+                //          << "TCP:" << receivedTcpPort << "PK:" << receivedPublicKeyHex.left(8) << "Repos:" << receivedPublicRepoNames;
+                
+                DiscoveredPeerInfo info;
+                info.id = receivedUsername;
+                info.address = senderAddress;
+                info.tcpPort = receivedTcpPort;
+                info.publicKeyHex = receivedPublicKeyHex;
+                info.publicRepoNames = receivedPublicRepoNames; // Store received repo names
+                info.lastSeen = QDateTime::currentMSecsSinceEpoch();
+
+                m_discoveredPeers[receivedUsername] = info;
+                emit lanPeerDiscoveredOrUpdated(info);
+            } else if (in.status() != QDataStream::Ok) {
+                 qDebug() << "NM: Malformed P2PGIT_DISCOVERY_V3 payload from" << senderAddress.toString() << "User:" << receivedUsername;
+            } else if (receivedUsername == m_myUsername) {
+                // Ignored self-broadcast
+            }
+
+        } else if (magicHeader == "P2PGIT_DISCOVERY_V2") { // Backward compatibility for V2
             in >> receivedUsername >> receivedTcpPort >> receivedPublicKeyHex;
-            if (in.status() == QDataStream::Ok && !receivedUsername.isEmpty() && !receivedPublicKeyHex.isEmpty() && receivedUsername != m_myUsername) {
-                // qDebug() << "NM: Received UDP V2 from" << receivedUsername << "@" << senderAddress.toString() << "TCP:" << receivedTcpPort << "PK:" << receivedPublicKeyHex.left(8);
-                DiscoveredPeerInfo info; info.id = receivedUsername; info.address = senderAddress; info.tcpPort = receivedTcpPort; info.publicKeyHex = receivedPublicKeyHex; info.lastSeen = QDateTime::currentMSecsSinceEpoch();
+             if (in.status() == QDataStream::Ok && !receivedUsername.isEmpty() && 
+                 !receivedPublicKeyHex.isEmpty() && receivedUsername != m_myUsername) {
+                // qDebug() << "NM: Received UDP V2 from" << receivedUsername << "@" << senderAddress.toString() << "TCP:" << receivedTcpPort;
+                DiscoveredPeerInfo info; info.id = receivedUsername; info.address = senderAddress;
+                info.tcpPort = receivedTcpPort; info.publicKeyHex = receivedPublicKeyHex; 
+                info.lastSeen = QDateTime::currentMSecsSinceEpoch(); // publicRepoNames will be empty
                 m_discoveredPeers[receivedUsername] = info; emit lanPeerDiscoveredOrUpdated(info);
-            } // ... else malformed V2 ...
-        } // ... else ignore ...
+             }
+        } else {
+            qDebug() << "NM: Ignoring UDP packet from" << senderAddress.toString() << "with unknown magic header:" << magicHeader;
+        }
     }
 }
 void NetworkManager::onBroadcastTimerTimeout() { sendDiscoveryBroadcast(); }

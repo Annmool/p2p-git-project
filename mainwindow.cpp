@@ -12,13 +12,15 @@
 #include <QStandardPaths> // For settings path
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent),
+    : QMainWindow(parent), // Base class constructor
       m_currentlyDisplayedLogBranch(""),
       m_myUsername("DefaultUser"),      // Initial default, will be set by QInputDialog
-      m_identityManager_ptr(nullptr), // Initialize pointers to nullptr
+      m_identityManager_ptr(nullptr), // Initialize pointer members to nullptr
       m_networkManager_ptr(nullptr),
-      m_repoManager_ptr(nullptr)
-{
+      m_repoManager_ptr(nullptr)      // Initialize new pointer
+      // The member initializer list ends here with the last comma (or no comma if it's the last item)
+{ // Constructor body starts here
+
     // 1. Get Peer Name (username) from user
     bool ok_name;
     QString name_prompt_default = QHostInfo::localHostName();
@@ -34,39 +36,37 @@ MainWindow::MainWindow(QWidget *parent)
         m_myUsername = name_prompt_default; // Use the generated/hostname default
     }
 
-    // 2. Initialize IdentityManager using the chosen username for its path
-    m_identityManager_ptr = new IdentityManager(m_myUsername);
+    // 2. Initialize IdentityManager
+    m_identityManager_ptr = new IdentityManager(m_myUsername); // Uses username for path
     if (!m_identityManager_ptr->initializeKeys()) {
         QMessageBox::critical(this, "Identity Error", "Failed to initialize cryptographic keys! Network features may be disabled or insecure.");
-        // Consider what to do if keys fail - for now, app will continue but network might be odd
+        // Consider how to handle this - app might still run with limited functionality
     }
 
     // 3. Initialize RepositoryManager
     QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir configAppDir(configPath); // e.g., ~/.config/
-    QString appSpecificDirName = "P2PGitClient"; // Your application's folder
+    QDir configAppDir(configPath);
+    QString appSpecificDirName = "P2PGitClient";
     if (!configAppDir.exists(appSpecificDirName)) {
         configAppDir.mkdir(appSpecificDirName);
     }
-    configAppDir.cd(appSpecificDirName); // Now in ~/.config/P2PGitClient/
-    // User-specific subfolder for repository settings
+    configAppDir.cd(appSpecificDirName);
     if (!configAppDir.exists(m_myUsername)) {
         configAppDir.mkdir(m_myUsername);
     }
-    configAppDir.cd(m_myUsername); // Now in ~/.config/P2PGitClient/MyUsername/
+    configAppDir.cd(m_myUsername);
     QString repoManagerStorageFile = configAppDir.filePath("managed_repositories.json");
-    m_repoManager_ptr = new RepositoryManager(repoManagerStorageFile, this); // Parent to MainWindow for auto-deletion
+    m_repoManager_ptr = new RepositoryManager(repoManagerStorageFile, this); // Parent to MainWindow
 
-
-    // 4. Initialize NetworkManager, passing the final username and initialized IdentityManager
-    if (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized()) {
-        m_networkManager_ptr = new NetworkManager(m_myUsername, m_identityManager_ptr, this); // Parent to MainWindow
+    // 4. Initialize NetworkManager (NOW THE IF BLOCK IS CORRECTLY PLACED)
+    if (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized() && m_repoManager_ptr) {
+        m_networkManager_ptr = new NetworkManager(m_myUsername, m_identityManager_ptr, m_repoManager_ptr, this); // Pass repoManager and parent
     } else {
-        QMessageBox::critical(this, "Network Error", "Cannot initialize network manager: Identity keys not ready.");
-        // m_networkManager_ptr remains nullptr, network UI will be disabled
+        QMessageBox::critical(this, "Core Services Error", "Cannot initialize network or repository services due to prior initialization failures.");
+        // m_networkManager_ptr will remain nullptr
     }
 
-    // Set window title now that m_myUsername and keys are known
+    // Set window title now that m_myUsername and keys are potentially known
     setWindowTitle("P2P Git Client - " + m_myUsername +
                   (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized() ?
                    " [PK:" + QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(8) + "...]" :
@@ -75,26 +75,28 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi(); // Create all UI elements
 
     // --- Connections ---
-    // Git related UI
+    // ... (your connect statements for Git UI) ...
     connect(initRepoButton, &QPushButton::clicked, this, &MainWindow::onInitRepoClicked);
     connect(openRepoButton, &QPushButton::clicked, this, &MainWindow::onOpenRepoClicked);
     connect(refreshLogButton, &QPushButton::clicked, this, &MainWindow::onRefreshLogClicked);
     connect(refreshBranchesButton, &QPushButton::clicked, this, &MainWindow::onRefreshBranchesClicked);
     connect(checkoutBranchButton, &QPushButton::clicked, this, &MainWindow::onCheckoutBranchClicked);
 
-    // Repository Management UI
-    if (addManagedRepoButton) { // Check if button was created
-        connect(addManagedRepoButton, &QPushButton::clicked, this, &MainWindow::onAddManagedRepoClicked);
-    }
-    if (managedReposListWidget) { // Check if list widget was created
-         connect(managedReposListWidget, &QListWidget::itemDoubleClicked, this, &MainWindow::onManagedRepoDoubleClicked);
-    }
-    if (m_repoManager_ptr) { // Connect signal from RepositoryManager
+
+    // Connections for Repository Management
+    if (m_repoManager_ptr) { // Check if repo manager was successfully created
+        if(addManagedRepoButton) { 
+             connect(addManagedRepoButton, &QPushButton::clicked, this, &MainWindow::onAddManagedRepoClicked);
+        }
+        if(managedReposListWidget){
+             connect(managedReposListWidget, &QListWidget::itemDoubleClicked, this, &MainWindow::onManagedRepoDoubleClicked);
+        }
         connect(m_repoManager_ptr, &RepositoryManager::managedRepositoryListChanged, this, &MainWindow::handleRepositoryListChanged);
     }
 
-    // Network related UI and Manager signals
-    if (m_networkManager_ptr) {
+
+    // Connections for Network
+    if (m_networkManager_ptr) { // Only connect network signals if manager was successfully created
         connect(toggleDiscoveryButton, &QPushButton::clicked, this, &MainWindow::onToggleDiscoveryAndTcpServerClicked);
         connect(sendMessageButton, &QPushButton::clicked, this, &MainWindow::onSendMessageClicked);
         connect(discoveredPeersList, &QListWidget::itemDoubleClicked, this, &MainWindow::onDiscoveredPeerDoubleClicked);
@@ -108,17 +110,18 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_networkManager_ptr, &NetworkManager::lanPeerDiscoveredOrUpdated, this, &MainWindow::handleLanPeerDiscoveredOrUpdated);
         connect(m_networkManager_ptr, &NetworkManager::lanPeerLost, this, &MainWindow::handleLanPeerLost);
     } else {
-        // If network manager failed to initialize, disable network UI parts
+        // If network manager failed to initialize, disable relevant network UI parts
         if(toggleDiscoveryButton) toggleDiscoveryButton->setEnabled(false);
         if(sendMessageButton) sendMessageButton->setEnabled(false);
-        if(discoveredPeersList) discoveredPeersList->setEnabled(false);
+        if(discoveredPeersList) discoveredPeersList->setEnabled(false); // Or add a "Network Unavailable" message
+        if(connectedTcpPeersList) connectedTcpPeersList->setEnabled(false);
         if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Network services completely disabled due to critical initialization failure.</font>");
+        if(tcpServerStatusLabel) tcpServerStatusLabel->setText("TCP Server: OFFLINE (Init Error)");
     }
 
     updateRepositoryStatus(); // Initial UI state for Git panel
     if(m_repoManager_ptr) handleRepositoryListChanged(); // Initial population of managed repos list
 }
-
 MainWindow::~MainWindow() {
     // m_networkManager_ptr and m_repoManager_ptr are QObjects parented to `this` (MainWindow),
     // so Qt will delete them automatically when MainWindow is deleted.
@@ -830,20 +833,30 @@ void MainWindow::handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peer
         itemText += " [PKH:" + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(),QCryptographicHash::Sha1).toHex().left(6) + "]";
     }
 
+    if (!peerInfo.publicRepoNames.isEmpty()) { 
+        itemText += "\n  Offers: " + peerInfo.publicRepoNames.join(", ");
+    }
+
     QList<QListWidgetItem*> items = discoveredPeersList->findItems(peerInfo.id, Qt::MatchStartsWith); // Match by username/ID
 
-    if (!items.isEmpty()) { // Update existing item
-        items.first()->setText(itemText);
-        items.first()->setData(Qt::UserRole, peerInfo.address.toString()); // IP
-        items.first()->setData(Qt::UserRole + 1, peerInfo.tcpPort);        // TCP Port
-        items.first()->setData(Qt::UserRole + 2, peerInfo.id);             // Username/ID
-        items.first()->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);   // Full Public Key
-    } else { // Add new item
+    if (!items.isEmpty()) {
+        items.first()->setText(itemText); // Update text
+        // Update data too
+        items.first()->setData(Qt::UserRole, peerInfo.address.toString());
+        items.first()->setData(Qt::UserRole + 1, peerInfo.tcpPort);
+        items.first()->setData(Qt::UserRole + 2, peerInfo.id);
+        items.first()->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
+        // If you want to store the repo list in item data (more complex for QListWidget display)
+        // QVariantList repoListVariant;
+        // for(const QString& repoName : peerInfo.publicRepoNames) repoListVariant.append(repoName);
+        // items.first()->setData(Qt::UserRole + 4, repoListVariant);
+    } else {
         QListWidgetItem* newItem = new QListWidgetItem(itemText, discoveredPeersList);
         newItem->setData(Qt::UserRole, peerInfo.address.toString());
         newItem->setData(Qt::UserRole + 1, peerInfo.tcpPort);
         newItem->setData(Qt::UserRole + 2, peerInfo.id);
         newItem->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
+        // newItem->setData(Qt::UserRole + 4, QVariant::fromValue(peerInfo.publicRepoNames));
     }
 }
 
