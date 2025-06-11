@@ -2,7 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-// Individual includes for Qt classes:
+// Individual includes for ALL Qt classes used as members or in function signatures:
 #include <QPushButton>
 #include <QLineEdit>
 #include <QTextEdit>
@@ -12,18 +12,22 @@
 #include <QComboBox>
 #include <QSplitter>
 #include <QListWidget>
-#include <QListWidgetItem>
+#include <QListWidgetItem> // For slot parameter
 #include <QFrame>
 #include <QInputDialog>
+#include <QStandardPaths>
+#include <QDir>
 #include <QTcpSocket>
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 
-#include "git_backend.h"     // Includes CommitInfo struct
-#include "network_manager.h" // Includes DiscoveredPeerInfo
+// Project-Specific Includes
+#include "git_backend.h"
+#include "network_manager.h"
 #include "identity_manager.h"
+#include "repository_manager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -37,21 +41,23 @@ public:
     ~MainWindow();
 
 private slots:
-    // Git
+     // Git Operations
     void onInitRepoClicked();
     void onOpenRepoClicked();
     void onRefreshLogClicked();
     void onRefreshBranchesClicked();
     void onCheckoutBranchClicked();
 
-    // Network - Control
-    void onToggleDiscoveryAndTcpServerClicked();
+    // Repository Management
+    void onAddManagedRepoClicked(); 
 
-    // Network - Actions
+    // Network Control & Actions
+    void onToggleDiscoveryAndTcpServerClicked();
     void onDiscoveredPeerDoubleClicked(QListWidgetItem* item);
     void onSendMessageClicked();
 
     // NetworkManager Signal Handlers
+    // ... (all your handle... slots are correctly declared here) ...
     void handleTcpServerStatusChanged(bool listening, quint16 port, const QString& error);
     void handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
     void handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex);
@@ -61,8 +67,15 @@ private slots:
     void handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
     void handleLanPeerLost(const QString& peerUsername);
 
+    // RepositoryManager Signal Handlers
+    void handleRepositoryListChanged();
+    void onManagedRepoDoubleClicked(QListWidgetItem* item);
+
 private:
     void setupUi();
+    void setupRepoManagementUi(QSplitter* parentSplitter); 
+    void setupNetworkUi(QSplitter* parentSplitter);        
+
     void updateRepositoryStatus();
     void loadCommitLog();
     void loadBranchList();
@@ -83,6 +96,11 @@ private:
     QPushButton *checkoutBranchButton;
     QTextEdit *messageLog;
 
+    // UI Elements - Repository Management
+    QFrame* repoManagementFrame;
+    QListWidget* managedReposListWidget;
+    QPushButton* addManagedRepoButton;
+
     // UI Elements - Network
     QFrame* networkFrame;
     QLabel* myPeerInfoLabel;
@@ -95,9 +113,10 @@ private:
     QTextEdit* networkLogDisplay;
 
     // Backend/Manager Instances
-    GitBackend gitBackend;                 // Can remain a value member if simple to init
-    IdentityManager* m_identityManager_ptr; // <<< NOW A POINTER
-    NetworkManager*  m_networkManager_ptr;  // <<< NOW A POINTER
+    GitBackend gitBackend;
+    IdentityManager* m_identityManager_ptr;
+    NetworkManager*  m_networkManager_ptr;
+    RepositoryManager* m_repoManager_ptr;
 };
 
 #endif // MAINWINDOW_H
