@@ -2,16 +2,28 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+// Individual includes for Qt classes:
 #include <QPushButton>
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QVBoxLayout>
-#include <QHBoxLayout> // For horizontal layouts
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QComboBox>   // For branches
-#include <QSplitter>   // For resizable panes
+#include <QComboBox>
+#include <QSplitter>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QFrame>
+#include <QInputDialog>
+#include <QTcpSocket>
+#include <QHostAddress>
+#include <QHostInfo>
+#include <QCryptographicHash>
+#include <QRandomGenerator>
 
-#include "git_backend.h" // This now includes the CommitInfo struct
+#include "git_backend.h"     // Includes CommitInfo struct
+#include "network_manager.h" // Includes DiscoveredPeerInfo
+#include "identity_manager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -25,37 +37,67 @@ public:
     ~MainWindow();
 
 private slots:
+    // Git
     void onInitRepoClicked();
     void onOpenRepoClicked();
     void onRefreshLogClicked();
     void onRefreshBranchesClicked();
     void onCheckoutBranchClicked();
 
-private:
-    void setupUi(); // Helper to organize UI creation
-    void updateRepositoryStatus(); // Updates UI based on open repo, loads log & branches
-    void loadCommitLog();        // Fetches and displays commit log
-    void loadBranchList();      // Fetches and displays branch list, updates current branch
-    void loadCommitLogForBranch(const std::string& branchName); // New helper
-    std::string m_currentlyDisplayedLogBranch; 
+    // Network - Control
+    void onToggleDiscoveryAndTcpServerClicked();
 
-    // UI Elements
+    // Network - Actions
+    void onDiscoveredPeerDoubleClicked(QListWidgetItem* item);
+    void onSendMessageClicked();
+
+    // NetworkManager Signal Handlers
+    void handleTcpServerStatusChanged(bool listening, quint16 port, const QString& error);
+    void handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
+    void handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex);
+    void handleTcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerUsername);
+    void handleTcpMessageReceived(QTcpSocket* peerSocket, const QString& peerUsername, const QString& message);
+    void handleTcpConnectionStatusChanged(const QString& peerUsername, const QString& peerPublicKeyHex, bool connected, const QString& error);
+    void handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
+    void handleLanPeerLost(const QString& peerUsername);
+
+private:
+    void setupUi();
+    void updateRepositoryStatus();
+    void loadCommitLog();
+    void loadBranchList();
+    void loadCommitLogForBranch(const std::string& branchName);
+    std::string m_currentlyDisplayedLogBranch;
+    QString m_myUsername;
+
+    // UI Elements - Git
     QLineEdit *repoPathInput;
     QPushButton *initRepoButton;
     QPushButton *openRepoButton;
     QLabel *currentRepoLabel;
-    QLabel *currentBranchLabel; // Label for current branch
-
+    QLabel *currentBranchLabel;
     QTextEdit *commitLogDisplay;
     QPushButton *refreshLogButton;
-
     QComboBox *branchComboBox;
     QPushButton *refreshBranchesButton;
     QPushButton *checkoutBranchButton;
+    QTextEdit *messageLog;
 
-    QTextEdit *messageLog; // For general status messages
+    // UI Elements - Network
+    QFrame* networkFrame;
+    QLabel* myPeerInfoLabel;
+    QPushButton* toggleDiscoveryButton;
+    QLabel* tcpServerStatusLabel;
+    QListWidget* discoveredPeersList;
+    QListWidget* connectedTcpPeersList;
+    QLineEdit* messageInput;
+    QPushButton* sendMessageButton;
+    QTextEdit* networkLogDisplay;
 
-    GitBackend gitBackend;
+    // Backend/Manager Instances
+    GitBackend gitBackend;                 // Can remain a value member if simple to init
+    IdentityManager* m_identityManager_ptr; // <<< NOW A POINTER
+    NetworkManager*  m_networkManager_ptr;  // <<< NOW A POINTER
 };
 
 #endif // MAINWINDOW_H

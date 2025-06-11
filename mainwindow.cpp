@@ -2,12 +2,55 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDir>
-#include <QFont>      // For setting bold font
-#include <QSplitter>  // Already included in .h but good practice if directly used
+#include <QFont>
+#include <QSplitter>
+#include <QTcpSocket>
+#include <QInputDialog>
+#include <QHostInfo>
+#include <QCryptographicHash>
+#include <QRandomGenerator>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent),m_currentlyDisplayedLogBranch("") {
-    setupUi(); // Call the new UI setup method
+    : QMainWindow(parent),
+      m_currentlyDisplayedLogBranch(""),
+      m_myUsername("DefaultUser"),
+      m_identityManager_ptr(nullptr), // Initialize pointer
+      m_networkManager_ptr(nullptr)   // Initialize pointer
+{
+    bool ok_name;
+    QString name_prompt_default = QHostInfo::localHostName();
+    if (name_prompt_default.isEmpty()) {
+        name_prompt_default = "Peer" + QString::number(QRandomGenerator::global()->bounded(10000));
+    }
+    QString name_from_dialog = QInputDialog::getText(this, tr("Enter Your Peer Name"),
+                                         tr("Peer Name (for discovery):"), QLineEdit::Normal,
+                                         name_prompt_default, &ok_name);
+    if (ok_name && !name_from_dialog.isEmpty()) {
+        m_myUsername = name_from_dialog;
+    } else {
+        m_myUsername = name_prompt_default;
+    }
+
+    m_identityManager_ptr = new IdentityManager(m_myUsername);
+    if (!m_identityManager_ptr->initializeKeys()) {
+        QMessageBox::critical(this, "Identity Error", "Failed to initialize cryptographic keys! Network features may be disabled or insecure.");
+        // m_identityManager_ptr is new'd, but keys aren't ready.
+        // Depending on desired behavior, could `delete m_identityManager_ptr; m_identityManager_ptr = nullptr;`
+    }
+
+    if (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized()) {
+        m_networkManager_ptr = new NetworkManager(m_myUsername, m_identityManager_ptr, this); // Pass `this` as parent
+    } else {
+        QMessageBox::critical(this, "Network Error", "Cannot initialize network manager: Identity keys not ready.");
+        // m_networkManager_ptr remains nullptr
+    }
+
+    setWindowTitle("P2P Git Client - " + m_myUsername +
+                  (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized() ?
+                   " [PK:" + QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(8) + "...]" :
+                   " [Keys Not Initialized!]"));
+    
+    setupUi();
 
     // --- Connections ---
     connect(initRepoButton, &QPushButton::clicked, this, &MainWindow::onInitRepoClicked);
@@ -15,162 +58,188 @@ MainWindow::MainWindow(QWidget *parent)
     connect(refreshLogButton, &QPushButton::clicked, this, &MainWindow::onRefreshLogClicked);
     connect(refreshBranchesButton, &QPushButton::clicked, this, &MainWindow::onRefreshBranchesClicked);
     connect(checkoutBranchButton, &QPushButton::clicked, this, &MainWindow::onCheckoutBranchClicked);
-    // connect(branchComboBox, QOverload<int>::of(&QComboBox::activated), this, &MainWindow::onBranchSelectedFromCombo); // Optional: checkout on select
 
-    updateRepositoryStatus(); // Initial status update
+    if (m_networkManager_ptr) {
+        connect(toggleDiscoveryButton, &QPushButton::clicked, this, &MainWindow::onToggleDiscoveryAndTcpServerClicked);
+        connect(sendMessageButton, &QPushButton::clicked, this, &MainWindow::onSendMessageClicked);
+        connect(discoveredPeersList, &QListWidget::itemDoubleClicked, this, &MainWindow::onDiscoveredPeerDoubleClicked);
+        connect(m_networkManager_ptr, &NetworkManager::tcpServerStatusChanged, this, &MainWindow::handleTcpServerStatusChanged);
+        connect(m_networkManager_ptr, &NetworkManager::incomingTcpConnectionRequest, this, &MainWindow::handleIncomingTcpConnectionRequest);
+        connect(m_networkManager_ptr, &NetworkManager::newTcpPeerConnected, this, &MainWindow::handleNewTcpPeerConnected);
+        connect(m_networkManager_ptr, &NetworkManager::tcpPeerDisconnected, this, &MainWindow::handleTcpPeerDisconnected);
+        connect(m_networkManager_ptr, &NetworkManager::tcpMessageReceived, this, &MainWindow::handleTcpMessageReceived);
+        connect(m_networkManager_ptr, &NetworkManager::tcpConnectionStatusChanged, this, &MainWindow::handleTcpConnectionStatusChanged);
+        connect(m_networkManager_ptr, &NetworkManager::lanPeerDiscoveredOrUpdated, this, &MainWindow::handleLanPeerDiscoveredOrUpdated);
+        connect(m_networkManager_ptr, &NetworkManager::lanPeerLost, this, &MainWindow::handleLanPeerLost);
+    } else {
+        if(toggleDiscoveryButton) toggleDiscoveryButton->setEnabled(false);
+        if(sendMessageButton) sendMessageButton->setEnabled(false);
+        if(discoveredPeersList) discoveredPeersList->setEnabled(false);
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Network services disabled (init failure).</font>");
+    }
+    updateRepositoryStatus();
 }
 
 MainWindow::~MainWindow() {
-    // Qt handles child widget deletion.
-    // gitBackend's destructor handles libgit2 shutdown and freeing m_currentRepo.
+    delete m_identityManager_ptr; // Manually delete non-QObject pointer
+    m_identityManager_ptr = nullptr;
+    // m_networkManager_ptr will be deleted by Qt's parent-child mechanism as it's parented to `this`
 }
 
 void MainWindow::setupUi() {
     QWidget *centralWidget = new QWidget(this);
-    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    QVBoxLayout *mainVLayout = new QVBoxLayout(centralWidget);
 
-    // --- Top Bar: Path Input and Actions ---
     QHBoxLayout *pathActionLayout = new QHBoxLayout();
     repoPathInput = new QLineEdit(this);
     repoPathInput->setPlaceholderText("Enter path or click Open/Initialize");
-    // Set an initial path if desired, or leave empty
     repoPathInput->setText(QDir::toNativeSeparators(QDir::homePath() + "/my_test_repo_p2p"));
-    pathActionLayout->addWidget(repoPathInput, 1); // Stretch factor for QLineEdit
+    pathActionLayout->addWidget(repoPathInput, 1);
     initRepoButton = new QPushButton("Initialize Here", this);
     pathActionLayout->addWidget(initRepoButton);
     openRepoButton = new QPushButton("Open Existing", this);
     pathActionLayout->addWidget(openRepoButton);
-    mainLayout->addLayout(pathActionLayout);
+    mainVLayout->addLayout(pathActionLayout);
 
-    // --- Status Bar: Current Repo and Branch ---
     QHBoxLayout *statusLayout = new QHBoxLayout();
     currentRepoLabel = new QLabel("No repository open.", this);
-    currentRepoLabel->setAlignment(Qt::AlignLeft);
-    QFont boldFont = currentRepoLabel->font();
-    boldFont.setBold(true);
-    currentRepoLabel->setFont(boldFont);
-    statusLayout->addWidget(currentRepoLabel, 1); // Stretch factor
-
+    QFont boldFont = currentRepoLabel->font(); boldFont.setBold(true);
+    currentRepoLabel->setFont(boldFont); statusLayout->addWidget(currentRepoLabel, 1);
     currentBranchLabel = new QLabel("Branch: -", this);
-    currentBranchLabel->setAlignment(Qt::AlignRight);
-    currentBranchLabel->setFont(boldFont);
-    statusLayout->addWidget(currentBranchLabel);
-    mainLayout->addLayout(statusLayout);
+    currentBranchLabel->setFont(boldFont); statusLayout->addWidget(currentBranchLabel);
+    mainVLayout->addLayout(statusLayout);
 
-
-    // --- Main Content Area with Splitter ---
-    QSplitter *mainSplitter = new QSplitter(Qt::Vertical, this);
-
-    // --- Top Pane of Splitter: Commits and Branches ---
-    QWidget *topPaneWidget = new QWidget(mainSplitter);
-    QVBoxLayout *topPaneLayout = new QVBoxLayout(topPaneWidget);
-
-    // Commit Log Area
-    QLabel *commitLogTitleLabel = new QLabel("Commit History:", topPaneWidget); // Changed name for clarity
-    topPaneLayout->addWidget(commitLogTitleLabel);
-    commitLogDisplay = new QTextEdit(topPaneWidget);
-    commitLogDisplay->setReadOnly(true);
-    commitLogDisplay->setFontFamily("monospace");
-    commitLogDisplay->setLineWrapMode(QTextEdit::NoWrap); // Prevent long lines from wrapping
-    topPaneLayout->addWidget(commitLogDisplay, 1); // Stretch factor
-    refreshLogButton = new QPushButton("Refresh Log", topPaneWidget);
-    topPaneLayout->addWidget(refreshLogButton);
-
-    // Branch Management Area
-    QHBoxLayout *branchControlLayout = new QHBoxLayout(); // Changed name for clarity
-    QLabel *branchSelectionLabel = new QLabel("Branches:", topPaneWidget); // Changed name
+    QSplitter *overallSplitter = new QSplitter(Qt::Horizontal, this);
+    QWidget *gitPaneWidget = new QWidget(overallSplitter);
+    QVBoxLayout *gitPaneLayout = new QVBoxLayout(gitPaneWidget);
+    QSplitter *gitInfoSplitter = new QSplitter(Qt::Vertical, gitPaneWidget);
+    QWidget *topGitPaneWidget = new QWidget(gitInfoSplitter);
+    QVBoxLayout *topGitPaneLayout = new QVBoxLayout(topGitPaneWidget);
+    QLabel *commitLogTitleLabel = new QLabel("Commit History:", topGitPaneWidget);
+    topGitPaneLayout->addWidget(commitLogTitleLabel);
+    commitLogDisplay = new QTextEdit(topGitPaneWidget);
+    commitLogDisplay->setReadOnly(true); commitLogDisplay->setFontFamily("monospace"); commitLogDisplay->setLineWrapMode(QTextEdit::NoWrap);
+    topGitPaneLayout->addWidget(commitLogDisplay, 1);
+    refreshLogButton = new QPushButton("Refresh Log", topGitPaneWidget);
+    topGitPaneLayout->addWidget(refreshLogButton);
+    QHBoxLayout *branchControlLayout = new QHBoxLayout();
+    QLabel *branchSelectionLabel = new QLabel("Branches:", topGitPaneWidget);
     branchControlLayout->addWidget(branchSelectionLabel);
-    branchComboBox = new QComboBox(topPaneWidget);
-    branchComboBox->setMinimumWidth(200); // Increased min width
-    branchControlLayout->addWidget(branchComboBox, 1); // Stretch factor
-    refreshBranchesButton = new QPushButton("Refresh Branches", topPaneWidget);
+    branchComboBox = new QComboBox(topGitPaneWidget);
+    branchComboBox->setMinimumWidth(200); branchControlLayout->addWidget(branchComboBox, 1);
+    refreshBranchesButton = new QPushButton("Refresh Branches", topGitPaneWidget);
     branchControlLayout->addWidget(refreshBranchesButton);
-    checkoutBranchButton = new QPushButton("Checkout Selected Branch", topPaneWidget); // Clarified text
+    checkoutBranchButton = new QPushButton("Checkout/View Selected", topGitPaneWidget);
     branchControlLayout->addWidget(checkoutBranchButton);
-    topPaneLayout->addLayout(branchControlLayout);
+    topGitPaneLayout->addLayout(branchControlLayout);
+    gitInfoSplitter->addWidget(topGitPaneWidget);
+    messageLog = new QTextEdit(gitInfoSplitter);
+    messageLog->setReadOnly(true); messageLog->setPlaceholderText("Git operation status messages..."); messageLog->setMaximumHeight(100);
+    gitInfoSplitter->addWidget(messageLog);
+    QList<int> gitSplitterSizes; gitSplitterSizes << 350 << 100; gitInfoSplitter->setSizes(gitSplitterSizes);
+    gitPaneLayout->addWidget(gitInfoSplitter);
+    overallSplitter->addWidget(gitPaneWidget);
 
-    mainSplitter->addWidget(topPaneWidget);
+    networkFrame = new QFrame(overallSplitter);
+    networkFrame->setFrameShape(QFrame::StyledPanel);
+    QVBoxLayout* networkVLayout = new QVBoxLayout(networkFrame);
+    networkVLayout->addWidget(new QLabel("<b>P2P Network (UDP Discovery):</b>", networkFrame));
 
-
-    // --- Bottom Pane of Splitter: Message Log ---
-    messageLog = new QTextEdit(mainSplitter);
-    messageLog->setReadOnly(true);
-    messageLog->setPlaceholderText("Status messages will appear here...");
-    mainSplitter->addWidget(messageLog);
-
-    // Set initial sizes for splitter panes
-    QList<int> sizes;
-    sizes << 300 << 100; // Example: top pane 300px, bottom pane 100px
-    mainSplitter->setSizes(sizes);
-    // Or use stretch factors if preferred (after adding widgets)
-    // mainSplitter->setStretchFactor(0, 3); // Top pane gets 3/4 of space
-    // mainSplitter->setStretchFactor(1, 1); // Bottom pane gets 1/4 of space
-
-
-    mainLayout->addWidget(mainSplitter, 1); // Add splitter to main layout, make it stretch
-
+    myPeerInfoLabel = new QLabel(QString("My Peer ID: %1\nMy PubKey (prefix): %2...")
+                                 .arg(m_myUsername.toHtmlEscaped())
+                                 .arg(m_identityManager_ptr ? QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10) : "N/A"), networkFrame);
+    myPeerInfoLabel->setWordWrap(true);
+    networkVLayout->addWidget(myPeerInfoLabel);
+    toggleDiscoveryButton = new QPushButton("Start Discovery & TCP Server", networkFrame);
+    networkVLayout->addWidget(toggleDiscoveryButton);
+    tcpServerStatusLabel = new QLabel("TCP Server: Inactive", networkFrame);
+    networkVLayout->addWidget(tcpServerStatusLabel);
+    networkVLayout->addWidget(new QLabel("Discovered Peers on LAN (double-click to connect):", networkFrame));
+    discoveredPeersList = new QListWidget(networkFrame);
+    discoveredPeersList->setToolTip("Double click a peer to initiate a TCP connection.");
+    networkVLayout->addWidget(discoveredPeersList, 1);
+    networkVLayout->addWidget(new QLabel("Established TCP Connections:", networkFrame));
+    connectedTcpPeersList = new QListWidget(networkFrame);
+    connectedTcpPeersList->setMaximumHeight(100);
+    networkVLayout->addWidget(connectedTcpPeersList);
+    QHBoxLayout* messageSendLayout = new QHBoxLayout();
+    messageInput = new QLineEdit(networkFrame);
+    messageInput->setPlaceholderText("Enter message (broadcast to TCP peers)...");
+    messageSendLayout->addWidget(messageInput, 1);
+    sendMessageButton = new QPushButton("Send Broadcast", networkFrame);
+    messageSendLayout->addWidget(sendMessageButton);
+    networkVLayout->addLayout(messageSendLayout);
+    networkVLayout->addWidget(new QLabel("Network Log/Chat:", networkFrame));
+    networkLogDisplay = new QTextEdit(networkFrame);
+    networkLogDisplay->setReadOnly(true);
+    networkLogDisplay->setFontFamily("monospace");
+    networkVLayout->addWidget(networkLogDisplay, 2);
+    overallSplitter->addWidget(networkFrame);
+    QList<int> overallSplitterSizes; overallSplitterSizes << 550 << 400;
+    overallSplitter->setSizes(overallSplitterSizes);
+    mainVLayout->addWidget(overallSplitter, 1);
     setCentralWidget(centralWidget);
-    setWindowTitle("P2P Git Client - Branches"); // Updated title
-    resize(800, 600); // Set a default window size
+    resize(1000, 700);
 }
-
 
 void MainWindow::updateRepositoryStatus() {
     bool repoIsOpen = gitBackend.isRepositoryOpen();
-
     refreshLogButton->setEnabled(repoIsOpen);
     refreshBranchesButton->setEnabled(repoIsOpen);
     checkoutBranchButton->setEnabled(repoIsOpen);
     branchComboBox->setEnabled(repoIsOpen);
-    // initRepoButton and openRepoButton are always enabled for now
 
     if (repoIsOpen) {
         QString path = QString::fromStdString(gitBackend.getCurrentRepositoryPath());
         currentRepoLabel->setText("Current Repository: " + QDir::toNativeSeparators(path));
-        loadBranchList(); // This will also update currentBranchLabel
-        loadCommitLog(); 
+        loadBranchList();
+        loadCommitLog();
     } else {
         currentRepoLabel->setText("No repository open.");
         currentBranchLabel->setText("Branch: -");
         commitLogDisplay->clear();
         branchComboBox->clear();
-        messageLog->append("No repository is open. Initialize or open one.");
+        if(messageLog && (messageLog->toPlainText().isEmpty() || !messageLog->toPlainText().endsWith("Initialize or open one."))){
+             messageLog->append("No repository is open. Initialize or open one.");
+        }
         m_currentlyDisplayedLogBranch = "";
     }
 }
 
-void MainWindow::loadCommitLogForBranch(const std::string& branchName) {
+void MainWindow::loadCommitLogForBranch(const std::string& branchNameOrSha) {
     commitLogDisplay->clear();
     if (!gitBackend.isRepositoryOpen()) {
         commitLogDisplay->setHtml("<i>No repository open.</i>");
         return;
     }
     std::string error_message_log;
-    // Call getCommitLog with the specific branch name
-    std::vector<CommitInfo> log = gitBackend.getCommitLog(100, error_message_log, branchName);
+    std::vector<CommitInfo> log = gitBackend.getCommitLog(100, error_message_log, branchNameOrSha);
 
-    QString titleBranchName = QString::fromStdString(branchName).toHtmlEscaped();
-    if (branchName.empty()){ // Should not happen if called with specific branch, but for safety
+    QString titleRefName = QString::fromStdString(branchNameOrSha).toHtmlEscaped();
+    if (branchNameOrSha.empty()){
         std::string currentBranchErr;
-        titleBranchName = QString::fromStdString(gitBackend.getCurrentBranch(currentBranchErr));
-        if (titleBranchName.isEmpty() || titleBranchName.contains("[")) titleBranchName = "Current HEAD";
+        titleRefName = QString::fromStdString(gitBackend.getCurrentBranch(currentBranchErr));
+        if (titleRefName.isEmpty() || titleRefName.startsWith("[")) {
+            titleRefName = "Current HEAD / " + titleRefName;
+        } else {
+            titleRefName = "HEAD (" + titleRefName + ")";
+        }
     }
 
-
-    if (!error_message_log.empty() && log.empty()) {
-        commitLogDisplay->setHtml("<font color=\"red\">Error loading commit log for <b>" + titleBranchName + "</b>: " + QString::fromStdString(error_message_log).toHtmlEscaped() + "</font>");
+    if (!error_message_log.empty() && log.empty()) { // Use std::string::empty()
+        commitLogDisplay->setHtml("<font color=\"red\">Error loading commit log for <b>" + titleRefName + "</b>: " + QString::fromStdString(error_message_log).toHtmlEscaped() + "</font>");
     } else if (log.empty()) {
-        commitLogDisplay->setHtml("<i>No commits found for <b>" + titleBranchName + "</b>.</i>");
+        commitLogDisplay->setHtml("<i>No commits found for <b>" + titleRefName + "</b>.</i>");
     } else {
         QString htmlLog;
-        htmlLog += "<h3>Commit History for: <b>" + titleBranchName + "</b></h3><hr/>";
+        htmlLog += "<h3>Commit History for: <b>" + titleRefName + "</b></h3><hr/>";
         for (const auto& entry : log) {
             htmlLog += QString("<b>%1</b> - %2 <%3> (%4)<br/>")
                            .arg(QString::fromStdString(entry.sha.substr(0, 7)))
                            .arg(QString::fromStdString(entry.author_name).toHtmlEscaped())
                            .arg(QString::fromStdString(entry.author_email).toHtmlEscaped())
                            .arg(QString::fromStdString(entry.date));
-            htmlLog += QString("    %1<br/><hr/>")
+            htmlLog += QString("    %1<br/><hr/>")
                            .arg(QString::fromStdString(entry.summary).toHtmlEscaped());
         }
         commitLogDisplay->setHtml(htmlLog);
@@ -178,81 +247,46 @@ void MainWindow::loadCommitLogForBranch(const std::string& branchName) {
 }
 
 void MainWindow::loadCommitLog() {
-     m_currentlyDisplayedLogBranch = ""; // Ensure this is cleared as we are now showing HEAD's log
-    // Call the helper with an empty string for branchName to signify HEAD
+    m_currentlyDisplayedLogBranch = "";
     loadCommitLogForBranch("");
-    commitLogDisplay->clear(); // Clear previous log
-    if (!gitBackend.isRepositoryOpen()) {
-        commitLogDisplay->setHtml("<i>No repository open to display log.</i>");
-        return;
-    }
-    std::string error_message;
-    std::vector<CommitInfo> log = gitBackend.getCommitLog(100, error_message); // Get up to 100 commits
-
-    if (!error_message.empty() && log.empty()) {
-        commitLogDisplay->setHtml("<font color=\"red\">Error loading commit log: " + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
-    } else if (log.empty()) {
-        commitLogDisplay->setHtml("<i>No commits in this branch yet.</i>");
-    } else {
-        QString htmlLog;
-        for (const auto& entry : log) {
-            htmlLog += QString("<b>%1</b> - %2 <%3> (%4)<br/>")
-                           .arg(QString::fromStdString(entry.sha.substr(0, 7))) // Abbreviated SHA
-                           .arg(QString::fromStdString(entry.author_name).toHtmlEscaped())
-                           .arg(QString::fromStdString(entry.author_email).toHtmlEscaped())
-                           .arg(QString::fromStdString(entry.date));
-            htmlLog += QString("    %1<br/><hr/>") // Indent summary
-                           .arg(QString::fromStdString(entry.summary).toHtmlEscaped());
-        }
-        commitLogDisplay->setHtml(htmlLog);
-    }
 }
 
 void MainWindow::loadBranchList() {
-    branchComboBox->clear(); // Clear previous items
+    branchComboBox->clear();
     if (!gitBackend.isRepositoryOpen()) return;
 
     std::string error_message;
-    // Now using GitBackend::BranchType::ALL
     std::vector<std::string> branches = gitBackend.listBranches(GitBackend::BranchType::ALL, error_message);
 
-    if (!error_message.empty()) {
-        // ... error handling ...
+    if (!error_message.empty()) { // Use std::string::empty()
+        messageLog->append("<font color=\"red\">Error listing branches: " + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
     } else {
         if (branches.empty()) {
             messageLog->append("No local or remote-tracking branches found in this repository.");
         }
         for (const std::string& branch_name_str : branches) {
-    QString branch_qstr = QString::fromStdString(branch_name_str);
-    if (branch_qstr.endsWith("/HEAD")) { // Simple check for refs like "origin/HEAD"
-        continue; // Skip adding it to the combo box
-    }
-    branchComboBox->addItem(branch_qstr);
-}
+            QString branch_qstr = QString::fromStdString(branch_name_str);
+            if (branch_qstr.endsWith("/HEAD")) {
+                continue;
+            }
+            branchComboBox->addItem(branch_qstr);
+        }
     }
 
-    // Update current branch label and select in ComboBox
-    std::string currentBranchName = gitBackend.getCurrentBranch(error_message);
-    if (!error_message.empty() && currentBranchName.empty()){ // Error fetching current branch
+    std::string currentBranchNameStr = gitBackend.getCurrentBranch(error_message);
+    if (!error_message.empty() && currentBranchNameStr.empty()){ // Use std::string::empty()
          messageLog->append("<font color=\"red\">Error fetching current branch: " + QString::fromStdString(error_message).toHtmlEscaped() + "</font>");
          currentBranchLabel->setText("Branch: [Error]");
-    } else if (!currentBranchName.empty()) {
-        currentBranchLabel->setText("Branch: <b>" + QString::fromStdString(currentBranchName).toHtmlEscaped() + "</b>");
-        int index = branchComboBox->findText(QString::fromStdString(currentBranchName));
+    } else if (!currentBranchNameStr.empty()) { // Use std::string::empty()
+        currentBranchLabel->setText("Branch: <b>" + QString::fromStdString(currentBranchNameStr).toHtmlEscaped() + "</b>");
+        int index = branchComboBox->findText(QString::fromStdString(currentBranchNameStr));
         if (index != -1) {
             branchComboBox->setCurrentIndex(index);
-        } else if (!branches.empty()){
-            // If current branch isn't in the list (e.g. detached HEAD not listed by GIT_BRANCH_LOCAL)
-            // but we got a name, we can still show it. Or select first available.
-            // For now, if not found, combo box won't have it selected.
         }
-    } else { // No current branch name returned (e.g. empty repo, or true error handled above)
+    } else {
         currentBranchLabel->setText("Branch: -");
     }
 }
-
-
-// --- SLOTS ---
 
 void MainWindow::onInitRepoClicked() {
     QString qPath = repoPathInput->text().trimmed();
@@ -263,9 +297,9 @@ void MainWindow::onInitRepoClicked() {
     }
     std::string path = qPath.toStdString();
     std::string errorMessage;
-    QDir dir(QDir::toNativeSeparators(qPath)); // Use native separators for QDir
+    QDir dir(QDir::toNativeSeparators(qPath));
     if (!dir.exists()) {
-        if (!dir.mkpath(".")) { // mkpath needs a path relative to QDir's path, or an absolute one.
+        if (!dir.mkpath(".")) {
             messageLog->append("<font color=\"red\">Error: Could not create directory: " + qPath.toHtmlEscaped() + "</font>");
             QMessageBox::critical(this, "Directory Error", "Could not create directory: " + qPath);
             return;
@@ -284,7 +318,6 @@ void MainWindow::onOpenRepoClicked() {
     if (currentPathSuggestion.isEmpty() || !QDir(currentPathSuggestion).exists()){
         currentPathSuggestion = QDir::homePath();
     }
-
     QString dirPath = QFileDialog::getExistingDirectory(this, tr("Open Git Repository"),
                                                         currentPathSuggestion,
                                                         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -292,7 +325,7 @@ void MainWindow::onOpenRepoClicked() {
         messageLog->append("Open repository cancelled by user.");
         return;
     }
-    repoPathInput->setText(QDir::toNativeSeparators(dirPath)); // Update input field
+    repoPathInput->setText(QDir::toNativeSeparators(dirPath));
     std::string path = dirPath.toStdString();
     std::string errorMessage;
     if (gitBackend.openRepository(path, errorMessage)) {
@@ -304,18 +337,23 @@ void MainWindow::onOpenRepoClicked() {
 }
 
 void MainWindow::onRefreshLogClicked() {
+    if (!m_networkManager_ptr) return; // Guard
     if (gitBackend.isRepositoryOpen()) {
-        if (!m_currentlyDisplayedLogBranch.empty()) {
-            // Refreshing the log for the specifically selected (likely remote) branch
-            messageLog->append("Refreshing commit log for: <b>" + QString::fromStdString(m_currentlyDisplayedLogBranch).toHtmlEscaped() + "</b>");
-            loadCommitLogForBranch(m_currentlyDisplayedLogBranch);
+        QString currentBranchInCombo = branchComboBox->currentText();
+        bool viewingSpecificRef = (!m_currentlyDisplayedLogBranch.empty() && m_currentlyDisplayedLogBranch == currentBranchInCombo.toStdString()) ||
+                                  (currentBranchInCombo.contains('/') && !currentBranchInCombo.startsWith("[Detached"));
+
+        if (viewingSpecificRef && !currentBranchInCombo.isEmpty()) {
+            networkLogDisplay->append("Refreshing commit log for selected reference: <b>" + currentBranchInCombo.toHtmlEscaped() + "</b>");
+            loadCommitLogForBranch(currentBranchInCombo.toStdString());
+            m_currentlyDisplayedLogBranch = currentBranchInCombo.toStdString();
         } else {
-            // Refreshing the log for the current HEAD
-            messageLog->append("Refreshing commit log for current HEAD.");
-            loadCommitLog(); // This loads for HEAD
+            networkLogDisplay->append("Refreshing commit log for current HEAD.");
+            loadCommitLog();
         }
     } else {
-        messageLog->append("No repository open to refresh log.");
+        if(networkLogDisplay) networkLogDisplay->append("No repository open to refresh log.");
+        if(messageLog) messageLog->append("No repository open to refresh log.");
     }
 }
 
@@ -329,6 +367,7 @@ void MainWindow::onRefreshBranchesClicked() {
 }
 
 void MainWindow::onCheckoutBranchClicked() {
+    if (!m_networkManager_ptr) return; // Guard
     if (!gitBackend.isRepositoryOpen()){
         messageLog->append("<font color=\"red\">No repository open.</font>");
         return;
@@ -341,12 +380,12 @@ void MainWindow::onCheckoutBranchClicked() {
     }
 
     std::string selectedBranchName = selectedBranchQStr.toStdString();
-    std::string error_message_op; 
+    std::string error_message_op;
 
     std::string error_msg_local_list;
     std::vector<std::string> local_branches = gitBackend.listBranches(GitBackend::BranchType::LOCAL, error_msg_local_list);
     bool is_actually_local_branch = false;
-    if (error_msg_local_list.empty()) {
+    if (error_msg_local_list.empty()) { // Use std::string::empty()
         for (const auto& local_b : local_branches) {
             if (local_b == selectedBranchName) {
                 is_actually_local_branch = true;
@@ -354,26 +393,218 @@ void MainWindow::onCheckoutBranchClicked() {
             }
         }
     } else {
-        messageLog->append("<font color=\"orange\">Warning: Could not list local branches to determine type: " + QString::fromStdString(error_msg_local_list) + "</font>");
-        // Fallback heuristic: if it doesn't contain '/', assume local.
-        // This is less reliable but a fallback.
-        is_actually_local_branch = (selectedBranchName.find('/') == std::string::npos);
+        messageLog->append("<font color=\"orange\">Warning: Could not list local branches to determine type: " + QString::fromStdString(error_msg_local_list).toHtmlEscaped() + "</font>");
+        is_actually_local_branch = (selectedBranchName.find('/') == std::string::npos && selectedBranchName.find('[') == std::string::npos);
     }
 
     if (is_actually_local_branch) {
-        // For local branches: Perform a full checkout.
         if (gitBackend.checkoutBranch(selectedBranchName, error_message_op)) {
             messageLog->append("<font color=\"green\">" + QString::fromStdString(error_message_op).toHtmlEscaped() + "</font>");
-            m_currentlyDisplayedLogBranch = ""; // Log will now be for HEAD
-            updateRepositoryStatus(); // This reloads log for new HEAD, branches, current branch label
+            m_currentlyDisplayedLogBranch = "";
+            updateRepositoryStatus();
         } else {
             messageLog->append("<font color=\"red\">Error checking out branch '" + selectedBranchQStr.toHtmlEscaped() + "': " + QString::fromStdString(error_message_op).toHtmlEscaped() + "</font>");
             QMessageBox::critical(this, "Checkout Failed", "Could not checkout branch: " + selectedBranchQStr + "\nError: " + QString::fromStdString(error_message_op));
         }
     } else {
-        // For remote-tracking (or non-local) branches: Just load its commit log. Do not change HEAD.
-        messageLog->append("Displaying commit history for: <b>" + selectedBranchQStr.toHtmlEscaped() + "</b> (Current HEAD unchanged)");
+        if(networkLogDisplay) networkLogDisplay->append("Displaying commit history for: <b>" + selectedBranchQStr.toHtmlEscaped() + "</b> (Current HEAD unchanged)");
         loadCommitLogForBranch(selectedBranchName);
-        m_currentlyDisplayedLogBranch = selectedBranchName; // Track that we are showing log for this specific ref
+        m_currentlyDisplayedLogBranch = selectedBranchName;
     }
+}
+
+
+// --- Network SLOTS Implementation ---
+
+void MainWindow::onToggleDiscoveryAndTcpServerClicked() {
+    if (!m_networkManager_ptr || !m_identityManager_ptr) { // Guard
+        QMessageBox::critical(this, "Network Error", "Network or Identity services not initialized.");
+        return;
+    }
+    // Check based on TCP server port; NetworkManager internally handles UDP timer state
+    if (m_networkManager_ptr->getTcpServerPort() > 0) {
+        m_networkManager_ptr->stopUdpDiscovery();
+        m_networkManager_ptr->stopTcpServer();
+    } else {
+        if (m_myUsername.isEmpty()) {
+            QMessageBox::warning(this, "Peer Name Error", "Your peer name is not set. Please restart.");
+            return;
+        }
+        if (!m_identityManager_ptr->areKeysInitialized() || m_identityManager_ptr->getMyPublicKeyHex().empty()){
+            QMessageBox::critical(this, "Identity Error", "Cryptographic keys are not initialized. Cannot start server/discovery.");
+            return;
+        }
+
+        if (m_networkManager_ptr->startTcpServer(0)) {
+            if (m_networkManager_ptr->startUdpDiscovery(45454)) {
+                if(networkLogDisplay) networkLogDisplay->append("<font color=\"blue\">UDP Discovery and TCP Server initiated.</font>");
+            } else {
+                if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">Failed to start UDP Discovery. TCP Server also stopped.</font>");
+                m_networkManager_ptr->stopTcpServer();
+            }
+        }
+    }
+}
+
+void MainWindow::onDiscoveredPeerDoubleClicked(QListWidgetItem* item) {
+    if (!m_networkManager_ptr) return; // Guard
+    if (!item) return;
+
+    QString peerIpStr = item->data(Qt::UserRole).toString();
+    bool portOk;
+    quint16 peerTcpPort = item->data(Qt::UserRole + 1).toUInt(&portOk);
+    QString peerUsername = item->data(Qt::UserRole + 2).toString();
+
+    if (peerUsername == m_myUsername) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"orange\">Cannot connect to self.</font>");
+        return;
+    }
+
+    if (portOk && !peerIpStr.isEmpty() && peerTcpPort > 0 && !peerUsername.isEmpty()) {
+        if(networkLogDisplay) networkLogDisplay->append("Attempting TCP connection to discovered peer: " + peerUsername.toHtmlEscaped() +
+                                  " @ " + peerIpStr + ":" + QString::number(peerTcpPort));
+        m_networkManager_ptr->connectToTcpPeer(QHostAddress(peerIpStr), peerTcpPort, peerUsername);
+    } else {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">Could not parse peer info from list item: " + item->text().toHtmlEscaped() + "</font>");
+    }
+}
+
+void MainWindow::onSendMessageClicked() {
+    if (!m_networkManager_ptr) return; // Guard
+    QString message = messageInput->text().trimmed();
+    if (message.isEmpty()) return;
+
+    if (!m_networkManager_ptr->hasActiveTcpConnections() ) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">Not connected to any peers. Cannot send message.</font>");
+        return;
+    }
+    m_networkManager_ptr->broadcastTcpMessage(message);
+    if(networkLogDisplay) networkLogDisplay->append("<font color=\"blue\"><b>Me (Broadcast):</b> " + message.toHtmlEscaped() + "</font>");
+    messageInput->clear();
+}
+
+void MainWindow::handleTcpServerStatusChanged(bool listening, quint16 port, const QString& error) {
+    if (listening) {
+        tcpServerStatusLabel->setText("TCP Server: Listening on port <b>" + QString::number(port) + "</b>");
+        toggleDiscoveryButton->setText("Stop Discovery & TCP Server");
+        if (m_identityManager_ptr) { // Guard
+            myPeerInfoLabel->setText(QString("My Peer ID: %1\nMy PubKey (prefix): %2...\nTCP Port: %3")
+                                     .arg(m_myUsername.toHtmlEscaped())
+                                     .arg(QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10))
+                                     .arg(port));
+        }
+    } else {
+        tcpServerStatusLabel->setText("TCP Server: Inactive");
+        toggleDiscoveryButton->setText("Start Discovery & TCP Server");
+        if (m_identityManager_ptr) { // Guard
+             myPeerInfoLabel->setText(QString("My Peer ID: %1\nMy PubKey (prefix): %2...")
+                                 .arg(m_myUsername.toHtmlEscaped())
+                                 .arg(QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10)));
+        }
+
+        if (!error.isEmpty()) { // Use std::string::empty()
+            if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">TCP Server error/stopped: " + error.toHtmlEscaped() + "</font>");
+        } else {
+            if(networkLogDisplay && tcpServerStatusLabel->text() != "TCP Server: Inactive") { // Avoid double message if already stopped
+                 networkLogDisplay->append("TCP Server stopped.");
+            }
+        }
+    }
+}
+
+void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername) {
+    if (!m_networkManager_ptr) return; // Guard
+    QString peerDisplay = discoveredUsername;
+    if (discoveredUsername.isEmpty() || discoveredUsername.startsWith("Unknown")) {
+        peerDisplay = address.toString() + ":" + QString::number(port);
+    }
+
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, "Incoming Connection Request",
+                                  QString("Accept incoming TCP connection from '%1'?").arg(peerDisplay.toHtmlEscaped()),
+                                  QMessageBox::Yes | QMessageBox::No);
+
+    if (reply == QMessageBox::Yes) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"blue\">User accepted connection from " + peerDisplay.toHtmlEscaped() + "</font>");
+        m_networkManager_ptr->acceptPendingTcpConnection(pendingSocket);
+    } else {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"orange\">User rejected connection from " + peerDisplay.toHtmlEscaped() + "</font>");
+        m_networkManager_ptr->rejectPendingTcpConnection(pendingSocket);
+    }
+}
+
+void MainWindow::handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex) {
+    Q_UNUSED(peerSocket);
+    QString fullPeerDisplayId = peerUsername;
+    if(peerSocket){
+         fullPeerDisplayId += " (" + peerSocket->peerAddress().toString() + ":" + QString::number(peerSocket->peerPort()) + ")";
+    }
+    if(!peerPublicKeyHex.isEmpty()){
+        fullPeerDisplayId += " [PKH: " + QCryptographicHash::hash(peerPublicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8) + "]";
+    }
+    
+    for(int i=0; i < connectedTcpPeersList->count(); ++i){
+        if(connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername) {
+            connectedTcpPeersList->item(i)->setText(fullPeerDisplayId);
+            return;
+        }
+    }
+    QListWidgetItem* newItem = new QListWidgetItem(fullPeerDisplayId, connectedTcpPeersList);
+    newItem->setData(Qt::UserRole, peerUsername);
+    if(networkLogDisplay) networkLogDisplay->append("<font color=\"green\">TCP Peer fully connected: " + peerUsername.toHtmlEscaped() + "</font>");
+}
+
+void MainWindow::handleTcpPeerDisconnected(QTcpSocket* peerSocket, const QString& peerUsername) {
+    Q_UNUSED(peerSocket);
+    for (int i = 0; i < connectedTcpPeersList->count(); ++i) {
+        if (connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername) {
+            delete connectedTcpPeersList->takeItem(i);
+            break;
+        }
+    }
+    if(networkLogDisplay) networkLogDisplay->append("<font color=\"orange\">TCP Peer disconnected: " + peerUsername.toHtmlEscaped() + "</font>");
+}
+
+void MainWindow::handleTcpMessageReceived(QTcpSocket* peerSocket, const QString& peerUsername, const QString& message) {
+    Q_UNUSED(peerSocket);
+    if(networkLogDisplay) networkLogDisplay->append("<b>" + peerUsername.toHtmlEscaped() + ":</b> " + message.toHtmlEscaped());
+}
+
+void MainWindow::handleTcpConnectionStatusChanged(const QString& peerUsernameOrAddress, const QString& peerPublicKeyHex, bool connected, const QString& error) {
+    if (connected) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"green\">TCP connection to " + peerUsernameOrAddress.toHtmlEscaped() + " established (PK received: " + (peerPublicKeyHex.isEmpty() ? "NO" : "YES") + "). Awaiting full handshake.</font>");
+    } else {
+        if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">Failed TCP connection attempt to " + peerUsernameOrAddress.toHtmlEscaped() + ": " + error.toHtmlEscaped() + "</font>");
+    }
+}
+
+void MainWindow::handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo) {
+    QString itemText = peerInfo.id + " (" + peerInfo.address.toString() + ":" + QString::number(peerInfo.tcpPort) + ")";
+    if(!peerInfo.publicKeyHex.isEmpty()){
+        itemText += " [PKH:" + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(),QCryptographicHash::Sha1).toHex().left(6) + "]";
+    }
+
+    QList<QListWidgetItem*> items = discoveredPeersList->findItems(peerInfo.id, Qt::MatchStartsWith);
+
+    if (!items.isEmpty()) {
+        items.first()->setText(itemText);
+        items.first()->setData(Qt::UserRole, peerInfo.address.toString());
+        items.first()->setData(Qt::UserRole + 1, peerInfo.tcpPort);
+        items.first()->setData(Qt::UserRole + 2, peerInfo.id);
+        items.first()->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
+    } else {
+        QListWidgetItem* newItem = new QListWidgetItem(itemText, discoveredPeersList);
+        newItem->setData(Qt::UserRole, peerInfo.address.toString());
+        newItem->setData(Qt::UserRole + 1, peerInfo.tcpPort);
+        newItem->setData(Qt::UserRole + 2, peerInfo.id);
+        newItem->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
+    }
+}
+
+void MainWindow::handleLanPeerLost(const QString& peerUsername) {
+    QList<QListWidgetItem*> items = discoveredPeersList->findItems(peerUsername, Qt::MatchStartsWith);
+    if (!items.isEmpty()) {
+        delete discoveredPeersList->takeItem(discoveredPeersList->row(items.first()));
+    }
+    if(networkLogDisplay) networkLogDisplay->append("<font color=\"gray\">LAN Peer lost: " + peerUsername.toHtmlEscaped() + "</font>");
 }
