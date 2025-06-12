@@ -9,18 +9,16 @@
 #include <QHostInfo>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
-#include <QStandardPaths> // For settings path
+#include <QStandardPaths>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), // Base class constructor
+    : QMainWindow(parent),
       m_currentlyDisplayedLogBranch(""),
-      m_myUsername("DefaultUser"),      // Initial default, will be set by QInputDialog
-      m_identityManager_ptr(nullptr), // Initialize pointer members to nullptr
+      m_myUsername("DefaultUser"),
+      m_identityManager_ptr(nullptr),
       m_networkManager_ptr(nullptr),
-      m_repoManager_ptr(nullptr)      // Initialize new pointer
-      // The member initializer list ends here with the last comma (or no comma if it's the last item)
-{ // Constructor body starts here
-
+      m_repoManager_ptr(nullptr)
+{
     // 1. Get Peer Name (username) from user
     bool ok_name;
     QString name_prompt_default = QHostInfo::localHostName();
@@ -33,14 +31,13 @@ MainWindow::MainWindow(QWidget *parent)
     if (ok_name && !name_from_dialog.isEmpty()) {
         m_myUsername = name_from_dialog;
     } else {
-        m_myUsername = name_prompt_default; // Use the generated/hostname default
+        m_myUsername = name_prompt_default;
     }
 
     // 2. Initialize IdentityManager
-    m_identityManager_ptr = new IdentityManager(m_myUsername); // Uses username for path
-    if (!m_identityManager_ptr->initializeKeys()) {
+    m_identityManager_ptr = new IdentityManager(m_myUsername);
+    if (!m_identityManager_ptr || !m_identityManager_ptr->initializeKeys()) {
         QMessageBox::critical(this, "Identity Error", "Failed to initialize cryptographic keys! Network features may be disabled or insecure.");
-        // Consider how to handle this - app might still run with limited functionality
     }
 
     // 3. Initialize RepositoryManager
@@ -48,44 +45,44 @@ MainWindow::MainWindow(QWidget *parent)
     QDir configAppDir(configPath);
     QString appSpecificDirName = "P2PGitClient";
     if (!configAppDir.exists(appSpecificDirName)) {
-        configAppDir.mkdir(appSpecificDirName);
+        if(!configAppDir.mkdir(appSpecificDirName)) {
+            qWarning() << "MainWindow: Could not create base app config directory:" << configAppDir.filePath(appSpecificDirName);
+        }
     }
     configAppDir.cd(appSpecificDirName);
     if (!configAppDir.exists(m_myUsername)) {
-        configAppDir.mkdir(m_myUsername);
+        if(!configAppDir.mkdir(m_myUsername)) {
+            qWarning() << "MainWindow: Could not create user-specific config directory:" << configAppDir.filePath(m_myUsername);
+        }
     }
     configAppDir.cd(m_myUsername);
     QString repoManagerStorageFile = configAppDir.filePath("managed_repositories.json");
-    m_repoManager_ptr = new RepositoryManager(repoManagerStorageFile, this); // Parent to MainWindow
+    m_repoManager_ptr = new RepositoryManager(repoManagerStorageFile, this);
 
-    // 4. Initialize NetworkManager (NOW THE IF BLOCK IS CORRECTLY PLACED)
+
+    // 4. Initialize NetworkManager
     if (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized() && m_repoManager_ptr) {
-        m_networkManager_ptr = new NetworkManager(m_myUsername, m_identityManager_ptr, m_repoManager_ptr, this); // Pass repoManager and parent
+        m_networkManager_ptr = new NetworkManager(m_myUsername, m_identityManager_ptr, m_repoManager_ptr, this);
     } else {
         QMessageBox::critical(this, "Core Services Error", "Cannot initialize network or repository services due to prior initialization failures.");
-        // m_networkManager_ptr will remain nullptr
     }
 
-    // Set window title now that m_myUsername and keys are potentially known
     setWindowTitle("P2P Git Client - " + m_myUsername +
                   (m_identityManager_ptr && m_identityManager_ptr->areKeysInitialized() ?
                    " [PK:" + QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(8) + "...]" :
                    " [Keys Not Initialized!]"));
     
-    setupUi(); // Create all UI elements
+    setupUi();
 
     // --- Connections ---
-    // ... (your connect statements for Git UI) ...
     connect(initRepoButton, &QPushButton::clicked, this, &MainWindow::onInitRepoClicked);
     connect(openRepoButton, &QPushButton::clicked, this, &MainWindow::onOpenRepoClicked);
     connect(refreshLogButton, &QPushButton::clicked, this, &MainWindow::onRefreshLogClicked);
     connect(refreshBranchesButton, &QPushButton::clicked, this, &MainWindow::onRefreshBranchesClicked);
     connect(checkoutBranchButton, &QPushButton::clicked, this, &MainWindow::onCheckoutBranchClicked);
 
-
-    // Connections for Repository Management
-    if (m_repoManager_ptr) { // Check if repo manager was successfully created
-        if(addManagedRepoButton) { 
+    if (m_repoManager_ptr) {
+        if(addManagedRepoButton) {
              connect(addManagedRepoButton, &QPushButton::clicked, this, &MainWindow::onAddManagedRepoClicked);
         }
         if(managedReposListWidget){
@@ -94,13 +91,16 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_repoManager_ptr, &RepositoryManager::managedRepositoryListChanged, this, &MainWindow::handleRepositoryListChanged);
     }
 
-
-    // Connections for Network
-    if (m_networkManager_ptr) { // Only connect network signals if manager was successfully created
+    if (m_networkManager_ptr) {
         connect(toggleDiscoveryButton, &QPushButton::clicked, this, &MainWindow::onToggleDiscoveryAndTcpServerClicked);
         connect(sendMessageButton, &QPushButton::clicked, this, &MainWindow::onSendMessageClicked);
-        connect(discoveredPeersList, &QListWidget::itemDoubleClicked, this, &MainWindow::onDiscoveredPeerDoubleClicked);
-
+        if(discoveredPeersTreeWidget) { // Use TreeWidget here
+            connect(discoveredPeersTreeWidget, &QTreeWidget::currentItemChanged, this, &MainWindow::onDiscoveredPeerOrRepoSelected);
+            // connect(discoveredPeersTreeWidget, &QTreeWidget::itemDoubleClicked, this, &MainWindow::onDiscoveredTreeItemDoubleClicked); // If you want double click on peer to connect
+        }
+        if(cloneSelectedRepoButton){
+            connect(cloneSelectedRepoButton, &QPushButton::clicked, this, &MainWindow::onCloneSelectedRepoClicked);
+        }
         connect(m_networkManager_ptr, &NetworkManager::tcpServerStatusChanged, this, &MainWindow::handleTcpServerStatusChanged);
         connect(m_networkManager_ptr, &NetworkManager::incomingTcpConnectionRequest, this, &MainWindow::handleIncomingTcpConnectionRequest);
         connect(m_networkManager_ptr, &NetworkManager::newTcpPeerConnected, this, &MainWindow::handleNewTcpPeerConnected);
@@ -109,35 +109,34 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_networkManager_ptr, &NetworkManager::tcpConnectionStatusChanged, this, &MainWindow::handleTcpConnectionStatusChanged);
         connect(m_networkManager_ptr, &NetworkManager::lanPeerDiscoveredOrUpdated, this, &MainWindow::handleLanPeerDiscoveredOrUpdated);
         connect(m_networkManager_ptr, &NetworkManager::lanPeerLost, this, &MainWindow::handleLanPeerLost);
+        connect(m_networkManager_ptr, &NetworkManager::repoBundleRequestedByPeer, this, &MainWindow::handleRepoBundleRequest);
+
     } else {
-        // If network manager failed to initialize, disable relevant network UI parts
         if(toggleDiscoveryButton) toggleDiscoveryButton->setEnabled(false);
         if(sendMessageButton) sendMessageButton->setEnabled(false);
-        if(discoveredPeersList) discoveredPeersList->setEnabled(false); // Or add a "Network Unavailable" message
+        if(discoveredPeersTreeWidget) discoveredPeersTreeWidget->setEnabled(false);
+        if(cloneSelectedRepoButton) cloneSelectedRepoButton->setEnabled(false);
         if(connectedTcpPeersList) connectedTcpPeersList->setEnabled(false);
-        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Network services completely disabled due to critical initialization failure.</font>");
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Network services disabled (init failure).</font>");
         if(tcpServerStatusLabel) tcpServerStatusLabel->setText("TCP Server: OFFLINE (Init Error)");
     }
-
-    updateRepositoryStatus(); // Initial UI state for Git panel
-    if(m_repoManager_ptr) handleRepositoryListChanged(); // Initial population of managed repos list
+    updateRepositoryStatus();
+    if(m_repoManager_ptr) handleRepositoryListChanged();
 }
+
 MainWindow::~MainWindow() {
-    // m_networkManager_ptr and m_repoManager_ptr are QObjects parented to `this` (MainWindow),
-    // so Qt will delete them automatically when MainWindow is deleted.
-    // m_identityManager_ptr is NOT a QObject, so we must delete it manually.
     delete m_identityManager_ptr;
     m_identityManager_ptr = nullptr;
+    // m_repoManager_ptr and m_networkManager_ptr are QObjects parented to `this`, Qt deletes them.
 }
 
 void MainWindow::setupUi() {
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainVLayout = new QVBoxLayout(centralWidget);
 
-    // --- Top Bar: Path Input and Actions (Git) ---
     QHBoxLayout *pathActionLayout = new QHBoxLayout();
     repoPathInput = new QLineEdit(this);
-    repoPathInput->setPlaceholderText("Enter path for new repo or select existing");
+    repoPathInput->setPlaceholderText("Enter path or click Open/Initialize");
     repoPathInput->setText(QDir::toNativeSeparators(QDir::homePath() + "/my_test_repo_p2p"));
     pathActionLayout->addWidget(repoPathInput, 1);
     initRepoButton = new QPushButton("Initialize Here", this);
@@ -146,7 +145,6 @@ void MainWindow::setupUi() {
     pathActionLayout->addWidget(openRepoButton);
     mainVLayout->addLayout(pathActionLayout);
 
-    // --- Status Bar: Current Repo and Branch (Git) ---
     QHBoxLayout *statusLayout = new QHBoxLayout();
     currentRepoLabel = new QLabel("No repository open.", this);
     QFont boldFont = currentRepoLabel->font(); boldFont.setBold(true);
@@ -155,21 +153,17 @@ void MainWindow::setupUi() {
     currentBranchLabel->setFont(boldFont); statusLayout->addWidget(currentBranchLabel);
     mainVLayout->addLayout(statusLayout);
 
-    // --- Main Content Area with Splitter (Git info, Repo Management, Network info) ---
     QSplitter *overallSplitter = new QSplitter(Qt::Horizontal, this);
 
-    // --- Left Pane: Git Operations ---
-    QWidget *gitOpsPaneWidget = new QWidget(overallSplitter); // Changed name for clarity
+    QWidget *gitOpsPaneWidget = new QWidget(overallSplitter);
     QVBoxLayout *gitOpsPaneLayout = new QVBoxLayout(gitOpsPaneWidget);
-    // Commit Log Area
     QLabel *commitLogTitleLabel = new QLabel("Commit History (Current Branch/Ref):", gitOpsPaneWidget);
     gitOpsPaneLayout->addWidget(commitLogTitleLabel);
     commitLogDisplay = new QTextEdit(gitOpsPaneWidget);
     commitLogDisplay->setReadOnly(true); commitLogDisplay->setFontFamily("monospace"); commitLogDisplay->setLineWrapMode(QTextEdit::NoWrap);
-    gitOpsPaneLayout->addWidget(commitLogDisplay, 1); // Stretch commit log
+    gitOpsPaneLayout->addWidget(commitLogDisplay, 1);
     refreshLogButton = new QPushButton("Refresh Log", gitOpsPaneWidget);
     gitOpsPaneLayout->addWidget(refreshLogButton);
-    // Branch Management Area
     QHBoxLayout *branchControlLayout = new QHBoxLayout();
     QLabel *branchSelectionLabel = new QLabel("Branches (All Types):", gitOpsPaneWidget);
     branchControlLayout->addWidget(branchSelectionLabel);
@@ -182,46 +176,32 @@ void MainWindow::setupUi() {
     gitOpsPaneLayout->addLayout(branchControlLayout);
     overallSplitter->addWidget(gitOpsPaneWidget);
 
+    setupRepoManagementUi(overallSplitter);
+    setupNetworkUi(overallSplitter);
 
-    // --- Middle Pane: Managed Repositories & Git Operation Messages ---
-    setupRepoManagementUi(overallSplitter); // Call helper to create this section
-
-    // --- Right Pane: Network Control Panel ---
-    setupNetworkUi(overallSplitter); // Call helper to create this section
-
-    // Adjust splitter proportions
-    QList<int> overallSplitterSizes;
-    overallSplitterSizes << 350 << 250 << 400; // Git Ops | Repo Mgmt | Network
+    QList<int> overallSplitterSizes; overallSplitterSizes << 400 << 300 << 350; 
     overallSplitter->setSizes(overallSplitterSizes);
-
     mainVLayout->addWidget(overallSplitter, 1);
-
     setCentralWidget(centralWidget);
-    // Window title is set in constructor after m_myUsername is known
-    resize(1200, 750);
+    resize(1250, 750);
 }
 
 void MainWindow::setupRepoManagementUi(QSplitter* parentSplitter) {
     repoManagementFrame = new QFrame(parentSplitter);
     repoManagementFrame->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout* repoMgmtLayout = new QVBoxLayout(repoManagementFrame);
-
     repoMgmtLayout->addWidget(new QLabel("<b>Managed Repositories:</b>", repoManagementFrame));
-    addManagedRepoButton = new QPushButton("Add Existing Folder to Manage", repoManagementFrame);
+    addManagedRepoButton = new QPushButton("Add Local Folder to Manage", repoManagementFrame);
     repoMgmtLayout->addWidget(addManagedRepoButton);
-
     managedReposListWidget = new QListWidget(repoManagementFrame);
-    managedReposListWidget->setToolTip("List of repositories. Double-click to open. Right-click for options (TODO).");
-    repoMgmtLayout->addWidget(managedReposListWidget, 1); // Stretch list
-
-    // General Git operation messages (moved here for better layout)
+    managedReposListWidget->setToolTip("List of repositories. Double-click to open.");
+    repoMgmtLayout->addWidget(managedReposListWidget, 1);
     repoMgmtLayout->addWidget(new QLabel("Git Operation Status:", repoManagementFrame));
     messageLog = new QTextEdit(repoManagementFrame);
     messageLog->setReadOnly(true);
     messageLog->setPlaceholderText("Git operation status messages will appear here...");
     messageLog->setMaximumHeight(150);
     repoMgmtLayout->addWidget(messageLog);
-
     parentSplitter->addWidget(repoManagementFrame);
 }
 
@@ -229,32 +209,31 @@ void MainWindow::setupNetworkUi(QSplitter* parentSplitter) {
     networkFrame = new QFrame(parentSplitter);
     networkFrame->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout* networkVLayout = new QVBoxLayout(networkFrame);
-
     networkVLayout->addWidget(new QLabel("<b>P2P Network (UDP Discovery):</b>", networkFrame));
-
-    myPeerInfoLabel = new QLabel(this); // Will be updated with peer info
+    myPeerInfoLabel = new QLabel(this);
     myPeerInfoLabel->setWordWrap(true);
-    // Set initial text, will be updated in constructor or handleTcpServerStatusChanged
     myPeerInfoLabel->setText(QString("My Peer ID: %1\nMy PubKey (prefix): %2...")
-                                 .arg(m_myUsername.toHtmlEscaped())
-                                 .arg(m_identityManager_ptr ? QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10) : "N/A"));
+                             .arg(m_myUsername.toHtmlEscaped())
+                             .arg(m_identityManager_ptr ? QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10) : "N/A"));
     networkVLayout->addWidget(myPeerInfoLabel);
-
     toggleDiscoveryButton = new QPushButton("Start Discovery & TCP Server", networkFrame);
     networkVLayout->addWidget(toggleDiscoveryButton);
     tcpServerStatusLabel = new QLabel("TCP Server: Inactive", networkFrame);
     networkVLayout->addWidget(tcpServerStatusLabel);
-
-    networkVLayout->addWidget(new QLabel("Discovered Peers on LAN (double-click to connect):", networkFrame));
-    discoveredPeersList = new QListWidget(networkFrame);
-    discoveredPeersList->setToolTip("Double click a peer to initiate a TCP connection.");
-    networkVLayout->addWidget(discoveredPeersList, 1); // Stretch
-
+    networkVLayout->addWidget(new QLabel("Discovered Peers & Repos on LAN:", networkFrame)); // Updated Label
+    discoveredPeersTreeWidget = new QTreeWidget(networkFrame); // Changed to QTreeWidget
+    discoveredPeersTreeWidget->setHeaderLabels(QStringList() << "Peer / Repository" << "Details");
+    discoveredPeersTreeWidget->setColumnCount(2);
+    discoveredPeersTreeWidget->setColumnWidth(0, 220);
+    discoveredPeersTreeWidget->setToolTip("Select a repository under a peer to enable Clone button.");
+    networkVLayout->addWidget(discoveredPeersTreeWidget, 1); // Stretch
+    cloneSelectedRepoButton = new QPushButton("Clone Selected Repository", networkFrame);
+    cloneSelectedRepoButton->setEnabled(false);
+    networkVLayout->addWidget(cloneSelectedRepoButton);
     networkVLayout->addWidget(new QLabel("Established TCP Connections:", networkFrame));
     connectedTcpPeersList = new QListWidget(networkFrame);
     connectedTcpPeersList->setMaximumHeight(100);
     networkVLayout->addWidget(connectedTcpPeersList);
-
     QHBoxLayout* messageSendLayout = new QHBoxLayout();
     messageInput = new QLineEdit(networkFrame);
     messageInput->setPlaceholderText("Enter message (broadcast to TCP peers)...");
@@ -262,21 +241,18 @@ void MainWindow::setupNetworkUi(QSplitter* parentSplitter) {
     sendMessageButton = new QPushButton("Send Broadcast", networkFrame);
     messageSendLayout->addWidget(sendMessageButton);
     networkVLayout->addLayout(messageSendLayout);
-
     networkVLayout->addWidget(new QLabel("Network Log/Chat:", networkFrame));
     networkLogDisplay = new QTextEdit(networkFrame);
     networkLogDisplay->setReadOnly(true);
     networkLogDisplay->setFontFamily("monospace");
-    networkVLayout->addWidget(networkLogDisplay, 2); // More stretch
-
+    networkVLayout->addWidget(networkLogDisplay, 2);
     parentSplitter->addWidget(networkFrame);
 }
-
 
 // --- Git related method implementations ---
 void MainWindow::updateRepositoryStatus() {
     bool repoIsOpen = gitBackend.isRepositoryOpen();
-    if(refreshLogButton) refreshLogButton->setEnabled(repoIsOpen); // Add null checks
+    if(refreshLogButton) refreshLogButton->setEnabled(repoIsOpen);
     if(refreshBranchesButton) refreshBranchesButton->setEnabled(repoIsOpen);
     if(checkoutBranchButton) checkoutBranchButton->setEnabled(repoIsOpen);
     if(branchComboBox) branchComboBox->setEnabled(repoIsOpen);
@@ -399,7 +375,7 @@ void MainWindow::onInitRepoClicked() {
     }
     if (gitBackend.initializeRepository(path, errorMessage)) {
         if(messageLog) messageLog->append("<font color=\"green\">" + QString::fromStdString(errorMessage).toHtmlEscaped() + "</font>");
-        if (m_repoManager_ptr) { // Add to managed list
+        if (m_repoManager_ptr) {
             QString repoName = QFileInfo(qPath).fileName();
             if (repoName.isEmpty() && !qPath.isEmpty()) repoName = QDir(qPath).dirName();
             if (repoName.isEmpty()) repoName = "Unnamed Initialized Repo";
@@ -433,16 +409,16 @@ void MainWindow::onOpenRepoClicked() {
     std::string errorMessage;
     if (gitBackend.openRepository(path, errorMessage)) {
         if(messageLog) messageLog->append("<font color=\"green\">" + QString::fromStdString(errorMessage).toHtmlEscaped() + "</font>");
-        if (m_repoManager_ptr) { // Check if already managed, if not, prompt to add
+        if (m_repoManager_ptr) {
             ManagedRepositoryInfo existingManaged = m_repoManager_ptr->getRepositoryInfoByPath(dirPath);
-            if(existingManaged.appId.isEmpty()){ // Not managed yet
+            if(existingManaged.appId.isEmpty()){
                 QString repoName = QFileInfo(dirPath).fileName();
                 if (repoName.isEmpty()) repoName = QDir(dirPath).dirName();
                 if (repoName.isEmpty()) repoName = "Unnamed Opened Repo";
                 
                 QMessageBox::StandardButton reply;
                 reply = QMessageBox::question(this, "Manage Repository",
-                                          QString("Add '%1' to managed repositories?").arg(repoName),
+                                          QString("Add '%1' to managed repositories?").arg(repoName.toHtmlEscaped()),
                                           QMessageBox::Yes|QMessageBox::No);
                 if (reply == QMessageBox::Yes) {
                     bool ok_name_prompt;
@@ -465,11 +441,10 @@ void MainWindow::onRefreshLogClicked() {
         if(messageLog) messageLog->append("No repository open to refresh log.");
         return;
     }
-    if (!m_networkManager_ptr && networkLogDisplay) { /* Can't use networkLogDisplay if no network manager */ }
 
     QString currentBranchInCombo = branchComboBox->currentText();
     bool viewingSpecificRef = (!m_currentlyDisplayedLogBranch.empty() && m_currentlyDisplayedLogBranch == currentBranchInCombo.toStdString()) ||
-                              (currentBranchInCombo.contains('/') && !currentBranchInCombo.startsWith("[Detached"));
+                              (currentBranchInCombo.contains('/') && !currentBranchInCombo.startsWith("[D")); // Match "[Detached..."
 
     if (viewingSpecificRef && !currentBranchInCombo.isEmpty()) {
         if(networkLogDisplay) networkLogDisplay->append("Refreshing commit log for selected reference: <b>" + currentBranchInCombo.toHtmlEscaped() + "</b>");
@@ -491,12 +466,12 @@ void MainWindow::onRefreshBranchesClicked() {
 }
 
 void MainWindow::onManagedRepoDoubleClicked(QListWidgetItem* item) {
-    if (!item || !m_repoManager_ptr) { // Guard against null pointers
+    if (!item || !m_repoManager_ptr) {
         qWarning() << "MainWindow::onManagedRepoDoubleClicked: Null item or repo manager.";
         return;
     }
 
-    QString appId = item->data(Qt::UserRole).toString(); // We stored appId in UserRole
+    QString appId = item->data(Qt::UserRole).toString();
     if (appId.isEmpty()) {
         qWarning() << "MainWindow: Managed repo item double-clicked, but no AppID found in item data.";
         if(messageLog) messageLog->append("<font color='red'>Error: Could not identify selected managed repository.</font>");
@@ -504,7 +479,7 @@ void MainWindow::onManagedRepoDoubleClicked(QListWidgetItem* item) {
     }
 
     ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfo(appId);
-    if (repoInfo.appId.isEmpty() || repoInfo.localPath.isEmpty()) { // Check if a valid repo was found
+    if (repoInfo.appId.isEmpty() || repoInfo.localPath.isEmpty()) {
         qWarning() << "MainWindow: Could not retrieve info for managed repo with AppID:" << appId;
         if(messageLog) messageLog->append("<font color='red'>Error: Could not retrieve details for selected managed repository.</font>");
         return;
@@ -512,21 +487,20 @@ void MainWindow::onManagedRepoDoubleClicked(QListWidgetItem* item) {
 
     qDebug() << "MainWindow: Double-clicked managed repo:" << repoInfo.displayName << "Path:" << repoInfo.localPath;
 
-    // Now, try to open this repository using GitBackend
     std::string errorMessage;
     if (gitBackend.openRepository(repoInfo.localPath.toStdString(), errorMessage)) {
-        if(messageLog) messageLog->append("<font color=\"green\">Opened managed repository: " + repoInfo.displayName.toHtmlEscaped() + 
+        if(messageLog) messageLog->append("<font color=\"green\">Opened managed repository: " + repoInfo.displayName.toHtmlEscaped() +
                                           " (" + QDir::toNativeSeparators(repoInfo.localPath).toHtmlEscaped() + ")</font>");
-        if(repoPathInput) repoPathInput->setText(QDir::toNativeSeparators(repoInfo.localPath)); // Update the path input field
-        updateRepositoryStatus(); // This will load its log, branches, etc.
+        if(repoPathInput) repoPathInput->setText(QDir::toNativeSeparators(repoInfo.localPath));
+        updateRepositoryStatus();
     } else {
-        if(messageLog) messageLog->append("<font color=\"red\">Failed to open managed repository '" + repoInfo.displayName.toHtmlEscaped() + 
+        if(messageLog) messageLog->append("<font color=\"red\">Failed to open managed repository '" + repoInfo.displayName.toHtmlEscaped() +
                                           "': " + QString::fromStdString(errorMessage).toHtmlEscaped() + "</font>");
         QMessageBox::critical(this, "Open Repository Failed",
                               "Could not open the selected managed repository: " + repoInfo.displayName +
                               "\nPath: " + repoInfo.localPath +
                               "\nError: " + QString::fromStdString(errorMessage));
-        updateRepositoryStatus(); // Still call to clear any old repo state if open failed
+        updateRepositoryStatus();
     }
 }
 
@@ -557,9 +531,8 @@ void MainWindow::onCheckoutBranchClicked() {
         }
     } else {
         if(messageLog) messageLog->append("<font color=\"orange\">Warning: Could not list local branches to determine type: " + QString::fromStdString(error_msg_local_list).toHtmlEscaped() + "</font>");
- 
-        is_actually_local_branch = (selectedBranchName.find('/') == std::string::npos && 
-                                   (!selectedBranchName.empty() && selectedBranchName[0] != '[') ); // <<< CORRECTED LINE
+        is_actually_local_branch = (selectedBranchName.find('/') == std::string::npos &&
+                                   (!selectedBranchName.empty() && selectedBranchName[0] != '[') );
     }
 
     if (is_actually_local_branch) {
@@ -612,15 +585,13 @@ void MainWindow::onAddManagedRepoClicked() {
         return;
     }
 
-    // Validate if it's a Git repository before adding
     std::string tempError;
-    GitBackend tempGitBackend; // Use a temporary GitBackend to check
+    GitBackend tempGitBackend;
     if (!tempGitBackend.openRepository(dirPath.toStdString(), tempError)) {
-        QMessageBox::warning(this, "Not a Git Repository", 
+        QMessageBox::warning(this, "Not a Git Repository",
             "The selected directory does not appear to be a valid Git repository or could not be opened.\nError: " + QString::fromStdString(tempError));
         return;
     }
-    // tempGitBackend goes out of scope, repo closed.
 
     ManagedRepositoryInfo existingInfo = m_repoManager_ptr->getRepositoryInfoByPath(dirPath);
     if(!existingInfo.appId.isEmpty()){
@@ -636,23 +607,22 @@ void MainWindow::onAddManagedRepoClicked() {
     QString displayName = QInputDialog::getText(this, "Manage Repository",
                                             "Enter a display name for this repository:",
                                             QLineEdit::Normal, repoName, &ok_name_prompt);
-    if (!ok_name_prompt) { // User cancelled name input
+    if (!ok_name_prompt) {
         if(messageLog) messageLog->append("Add managed repository cancelled (name input).");
         return;
     }
     QString finalDisplayName = displayName.isEmpty() ? repoName : displayName;
 
-    bool isPublic = (QMessageBox::question(this, "Set Visibility", 
-                                           "Make this repository public on the P2P network (discoverable by others)?", 
+    bool isPublic = (QMessageBox::question(this, "Set Visibility",
+                                           "Make this repository public on the P2P network (discoverable by others)?",
                                            QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes);
 
     if (m_repoManager_ptr->addManagedRepository(dirPath, finalDisplayName, isPublic, m_myUsername)) {
         if(messageLog) messageLog->append("<font color=\"green\">Repository '" + finalDisplayName.toHtmlEscaped() + "' added to management.</font>");
     } else {
         if(messageLog) messageLog->append("<font color=\"red\">Failed to add '" + finalDisplayName.toHtmlEscaped() + "' to management. It might already be managed by path or an error occurred.</font>");
-        QMessageBox::warning(this, "Add Repository Failed", "Could not add the repository to management. Check logs for details (it might already be listed).");
+        QMessageBox::warning(this, "Add Repository Failed", "Could not add the repository to management. Check logs.");
     }
-    // The list will be updated by handleRepositoryListChanged via the signal
 }
 
 
@@ -685,25 +655,86 @@ void MainWindow::onToggleDiscoveryAndTcpServerClicked() {
     }
 }
 
-void MainWindow::onDiscoveredPeerDoubleClicked(QListWidgetItem* item) {
-    if (!m_networkManager_ptr) return;
-    if (!item) return;
-    QString peerIpStr = item->data(Qt::UserRole).toString();
-    bool portOk;
-    quint16 peerTcpPort = item->data(Qt::UserRole + 1).toUInt(&portOk);
-    QString peerUsername = item->data(Qt::UserRole + 2).toString();
+void MainWindow::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem* current, QTreeWidgetItem* previous) {
+    Q_UNUSED(previous);
+    if (!cloneSelectedRepoButton) return;
 
-    if (peerUsername == m_myUsername) {
-        if(networkLogDisplay) networkLogDisplay->append("<font color=\"orange\">Cannot connect to self.</font>");
-        return;
-    }
-    if (portOk && !peerIpStr.isEmpty() && peerTcpPort > 0 && !peerUsername.isEmpty()) {
-        if(networkLogDisplay) networkLogDisplay->append("Attempting TCP to discovered: " + peerUsername.toHtmlEscaped() + " @ " + peerIpStr + ":" + QString::number(peerTcpPort));
-        m_networkManager_ptr->connectToTcpPeer(QHostAddress(peerIpStr), peerTcpPort, peerUsername);
-    } else {
-        if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">Could not parse peer info: " + item->text().toHtmlEscaped() + "</font>");
+    cloneSelectedRepoButton->setEnabled(false); 
+    if (current) {
+        if (current->parent()) { // If it has a parent, it's a repo item
+            cloneSelectedRepoButton->setEnabled(true);
+        }
     }
 }
+
+void MainWindow::onCloneSelectedRepoClicked() {
+    if (!m_networkManager_ptr || !m_repoManager_ptr || !discoveredPeersTreeWidget) {
+        QMessageBox::critical(this, "Error", "Core services not ready for cloning.");
+        return;
+    }
+
+    QTreeWidgetItem* currentItem = discoveredPeersTreeWidget->currentItem();
+    if (!currentItem || !currentItem->parent()) {
+        QMessageBox::warning(this, "Select Repository", "Please select a specific repository from a peer to clone.");
+        return;
+    }
+
+    QString repoNameToClone = currentItem->data(0, Qt::UserRole).toString();
+    QString parentPeerUsername = currentItem->data(0, Qt::UserRole + 1).toString();
+
+    QTcpSocket* providerSocket = m_networkManager_ptr->getSocketForPeer(parentPeerUsername);
+
+    if (!providerSocket) {
+        // Attempt to connect first if not already connected
+        QTreeWidgetItem* peerItem = currentItem->parent();
+        if(peerItem){
+            DiscoveredPeerInfo providerPeerInfo = peerItem->data(0, Qt::UserRole).value<DiscoveredPeerInfo>();
+            if(!providerPeerInfo.id.isEmpty()){
+                if(networkLogDisplay) networkLogDisplay->append("Initiating TCP connection to " + providerPeerInfo.id + " for cloning...");
+                bool connected = m_networkManager_ptr->connectToTcpPeer(providerPeerInfo.address, providerPeerInfo.tcpPort, providerPeerInfo.id);
+                // This is async. We'd need to queue the clone request until connection & handshake complete.
+                // For now, tell user to connect first.
+                if(!connected){ // if connectToHost itself indicated an immediate issue (rare)
+                     QMessageBox::warning(this, "Connection Error", "Could not initiate connection to peer: " + parentPeerUsername + "\nPlease ensure a TCP connection manually first for now.");
+                     return;
+                }
+                 QMessageBox::information(this, "Connection Initiated", "Attempting to connect to " + parentPeerUsername + ". Please wait for connection and try cloning again if it succeeds.");
+                return;
+            }
+        }
+        QMessageBox::warning(this, "Connection Error", "Not currently connected via TCP to peer: " + parentPeerUsername + "\nPlease establish a TCP connection first (e.g., by double-clicking the peer item if that feature is added, or wait for auto-connect feature).");
+        return;
+    }
+
+    QString localClonePathBase = QFileDialog::getExistingDirectory(this, "Select Base Directory to Clone Repository Into", QDir::homePath() + "/P2P_Clones");
+    if (localClonePathBase.isEmpty()) {
+        if (networkLogDisplay) networkLogDisplay->append("Clone cancelled by user (no directory selected).");
+        return;
+    }
+
+    QString suggestedRepoDirName = QFileInfo(repoNameToClone).fileName();
+    if (suggestedRepoDirName.isEmpty() || suggestedRepoDirName == "." || suggestedRepoDirName == "..") {
+        suggestedRepoDirName = "cloned_" + repoNameToClone.remove(QRegExp(QStringLiteral("[^a-zA-Z0-9_.-]"))).left(30);
+        if (suggestedRepoDirName == "cloned_") suggestedRepoDirName = "cloned_repository";
+    }
+    
+    QString fullLocalClonePath = QDir(localClonePathBase).filePath(suggestedRepoDirName);
+
+    if (QDir(fullLocalClonePath).exists()) {
+        QMessageBox::warning(this, "Clone Error", "Target directory already exists:\n" + fullLocalClonePath + "\nPlease choose a different location or clear the existing directory.");
+        return;
+    }
+
+    if(networkLogDisplay) networkLogDisplay->append(QString("Requesting to clone '%1' from peer '%2' into '%3'")
+                                  .arg(repoNameToClone.toHtmlEscaped())
+                                  .arg(parentPeerUsername.toHtmlEscaped())
+                                  .arg(fullLocalClonePath.toHtmlEscaped()));
+
+    m_networkManager_ptr->sendRepoBundleRequest(providerSocket, repoNameToClone, fullLocalClonePath);
+
+    if(cloneSelectedRepoButton) cloneSelectedRepoButton->setEnabled(false); 
+}
+
 
 void MainWindow::onSendMessageClicked() {
     if (!m_networkManager_ptr) return;
@@ -735,23 +766,12 @@ void MainWindow::handleTcpServerStatusChanged(bool listening, quint16 port, cons
                                  .arg(m_myUsername.toHtmlEscaped())
                                  .arg(QString::fromStdString(m_identityManager_ptr->getMyPublicKeyHex()).left(10)));
 
-        if (!error.isEmpty()) {
+        if (!error.isEmpty()) { 
             if(networkLogDisplay) networkLogDisplay->append("<font color=\"red\">TCP Server error/stopped: " + error.toHtmlEscaped() + "</font>");
         } else {
-            // Only log "stopped" if the button text indicates it *was* running
-            if(networkLogDisplay && toggleDiscoveryButton->text() == "Start Discovery & TCP Server") { // It means it was just stopped
-                 // Check if it was an intentional stop or a failure to start initially
-                 if (tcpServerStatusLabel->text().contains("Listening")) { // If it was actually listening before stopping
-                    // This condition is tricky here, as the label is already "Inactive"
-                    // A better state check in NetworkManager might be needed if this log is crucial.
-                 }
-            } else if (networkLogDisplay) {
-                // If button still says "Stop...", it means it failed to start. Error handled by NetworkManager.
-                // Or, it was stopped by user.
-                if(port !=0) { // If port is not 0, it means it was trying to listen or was listening
-                     networkLogDisplay->append("TCP Server stopped.");
-                }
-            }
+             if(networkLogDisplay && toggleDiscoveryButton->text() == "Start Discovery & TCP Server" && port !=0) { 
+                 networkLogDisplay->append("TCP Server stopped.");
+             }
         }
     }
 }
@@ -827,44 +847,121 @@ void MainWindow::handleTcpConnectionStatusChanged(const QString& peerUsernameOrA
 }
 
 void MainWindow::handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo) {
-    if(!discoveredPeersList || !networkLogDisplay) return;
-    QString itemText = peerInfo.id + " (" + peerInfo.address.toString() + ":" + QString::number(peerInfo.tcpPort) + ")";
-    if(!peerInfo.publicKeyHex.isEmpty()){
-        itemText += " [PKH:" + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(),QCryptographicHash::Sha1).toHex().left(6) + "]";
-    }
+    if(!discoveredPeersTreeWidget) return; // Use TreeWidget
 
-    if (!peerInfo.publicRepoNames.isEmpty()) { 
-        itemText += "\n  Offers: " + peerInfo.publicRepoNames.join(", ");
-    }
+    QList<QTreeWidgetItem*> foundItems = discoveredPeersTreeWidget->findItems(peerInfo.id, Qt::MatchExactly | Qt::MatchRecursive, 0);
+    QTreeWidgetItem* peerItem = nullptr;
 
-    QList<QListWidgetItem*> items = discoveredPeersList->findItems(peerInfo.id, Qt::MatchStartsWith); // Match by username/ID
+    QString pkHashStr = QString(QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(6)); // Convert to QString
+    QString peerDetails = QString("(%1:%2) [PKH:%3]")
+                            .arg(peerInfo.address.toString())
+                            .arg(peerInfo.tcpPort)
+                            .arg(pkHashStr); // <<< USE THE QSTRING VARIABLE
 
-    if (!items.isEmpty()) {
-        items.first()->setText(itemText); // Update text
-        // Update data too
-        items.first()->setData(Qt::UserRole, peerInfo.address.toString());
-        items.first()->setData(Qt::UserRole + 1, peerInfo.tcpPort);
-        items.first()->setData(Qt::UserRole + 2, peerInfo.id);
-        items.first()->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
-        // If you want to store the repo list in item data (more complex for QListWidget display)
-        // QVariantList repoListVariant;
-        // for(const QString& repoName : peerInfo.publicRepoNames) repoListVariant.append(repoName);
-        // items.first()->setData(Qt::UserRole + 4, repoListVariant);
+    if (foundItems.isEmpty()) {
+        peerItem = new QTreeWidgetItem(discoveredPeersTreeWidget);
+        peerItem->setText(0, peerInfo.id);
+        discoveredPeersTreeWidget->addTopLevelItem(peerItem);
     } else {
-        QListWidgetItem* newItem = new QListWidgetItem(itemText, discoveredPeersList);
-        newItem->setData(Qt::UserRole, peerInfo.address.toString());
-        newItem->setData(Qt::UserRole + 1, peerInfo.tcpPort);
-        newItem->setData(Qt::UserRole + 2, peerInfo.id);
-        newItem->setData(Qt::UserRole + 3, peerInfo.publicKeyHex);
-        // newItem->setData(Qt::UserRole + 4, QVariant::fromValue(peerInfo.publicRepoNames));
+        peerItem = foundItems.first();
+    }
+    peerItem->setText(1, peerDetails);
+    peerItem->setData(0, Qt::UserRole, QVariant::fromValue(peerInfo)); // Store full DiscoveredPeerInfo on peer item
+
+    // Clear existing repo children before re-adding to prevent duplicates
+    qDeleteAll(peerItem->takeChildren());
+
+    if (!peerInfo.publicRepoNames.isEmpty()) {
+        for (const QString& repoName : peerInfo.publicRepoNames) {
+            QTreeWidgetItem* repoItem = new QTreeWidgetItem(peerItem);
+            repoItem->setText(0, "  └── " + repoName);
+            repoItem->setData(0, Qt::UserRole, repoName); // Store repo name
+            repoItem->setData(0, Qt::UserRole + 1, peerInfo.id); // Store parent peer ID
+            repoItem->setText(1, "Public");
+        }
+        peerItem->setExpanded(true);
     }
 }
 
 void MainWindow::handleLanPeerLost(const QString& peerUsername) {
-    if(!discoveredPeersList || !networkLogDisplay) return;
-    QList<QListWidgetItem*> items = discoveredPeersList->findItems(peerUsername, Qt::MatchStartsWith); // Match by username/ID
+    if(!discoveredPeersTreeWidget || !networkLogDisplay) return;
+    QList<QTreeWidgetItem*> items = discoveredPeersTreeWidget->findItems(peerUsername, Qt::MatchExactly | Qt::MatchRecursive, 0);
     if (!items.isEmpty()) {
-        delete discoveredPeersList->takeItem(discoveredPeersList->row(items.first()));
+        delete items.first(); // This will remove the item and its children from the tree
     }
     networkLogDisplay->append("<font color=\"gray\">LAN Peer lost: " + peerUsername.toHtmlEscaped() + "</font>");
+}
+
+// Slot for handling bundle request (Provider side)
+void MainWindow::handleRepoBundleRequest(QTcpSocket* requestingPeerSocket, const QString& sourcePeerUsername, const QString& repoDisplayName, const QString& clientWantsToSaveAt) {
+    if (!m_repoManager_ptr || !m_networkManager_ptr || !gitBackend.isRepositoryOpen()) { // Check if a repo is open to bundle
+         if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Received bundle request, but no local repo is active to bundle, or services not ready.</font>");
+        // TODO: Send error back
+        return;
+    }
+    qDebug() << "MainWindow: Received request for bundle of" << repoDisplayName << "from" << sourcePeerUsername;
+    if (networkLogDisplay) networkLogDisplay->append(QString("Received request from %1 to clone repo '%2'. They plan to save at '%3'")
+                                                    .arg(sourcePeerUsername.toHtmlEscaped())
+                                                    .arg(repoDisplayName.toHtmlEscaped())
+                                                    .arg(clientWantsToSaveAt.toHtmlEscaped()));
+
+    ManagedRepositoryInfo repoToBundle;
+    bool found = false;
+    // We should bundle the currently *active* gitBackend repository if its display name matches,
+    // or iterate m_repoManager_ptr to find the repo by display name if that's how it's requested.
+    // For now, let's assume the request is for the *currently open repository* if the name matches.
+    // This needs to be more robust: the request should ideally use a unique repo ID.
+
+    // Get current open repo path from gitBackend
+    std::string currentOpenRepoPathStd = gitBackend.getCurrentRepositoryPath();
+    if(currentOpenRepoPathStd.empty()){
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>No repository currently open in GitBackend to fulfill bundle request for '" + repoDisplayName.toHtmlEscaped() + "'.</font>");
+        return;
+    }
+    QString currentOpenRepoPathQ = QString::fromStdString(currentOpenRepoPathStd);
+    
+    // Find this path in the managed repositories to get its display name and visibility
+    ManagedRepositoryInfo currentManagedInfo = m_repoManager_ptr->getRepositoryInfoByPath(currentOpenRepoPathQ);
+
+    if (currentManagedInfo.appId.isEmpty() || currentManagedInfo.displayName != repoDisplayName) {
+         if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Requested repo '" + repoDisplayName.toHtmlEscaped() + "' does not match currently open and managed repo OR not found.</font>");
+        // TODO: Send REPO_BUNDLE_ERROR
+        return;
+    }
+    
+    repoToBundle = currentManagedInfo;
+    found = true;
+
+
+    if (!found) { // This check is now somewhat redundant if we only bundle the active repo
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Requested repo '" + repoDisplayName.toHtmlEscaped() + "' not found in managed list.</font>");
+        return;
+    }
+
+    if (!repoToBundle.isPublic) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Requested repo '" + repoDisplayName.toHtmlEscaped() + "' is private. Access denied for bundle.</font>");
+        return;
+    }
+
+    std::string bundleFilePathStd;
+    std::string errorMsgBundle;
+    QString tempBundleDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/P2PGitBundles/" + QUuid::createUuid().toString();
+    QDir().mkpath(tempBundleDir); 
+
+    QString bundleBaseName = QFileInfo(repoToBundle.localPath).fileName();
+    if (bundleBaseName.isEmpty()) bundleBaseName = "repo_bundle_" + repoToBundle.appId;
+    
+    if (gitBackend.createBundle(tempBundleDir.toStdString(), bundleBaseName.toStdString(), bundleFilePathStd, errorMsgBundle)) {
+        if(networkLogDisplay) networkLogDisplay->append("<font color='green'>Bundle created: " + QString::fromStdString(bundleFilePathStd) + "</font>");
+        
+        // TODO: Implement actual file transfer via NetworkManager
+        // m_networkManager_ptr->startSendingBundle(requestingPeerSocket, repoToBundle.displayName, QString::fromStdString(bundleFilePathStd));
+        QMessageBox::information(this, "Bundle Request Processed", "Bundle created for " + repoDisplayName + " at " + QString::fromStdString(bundleFilePathStd) + "\n(File transfer sequence to peer not yet implemented)");
+        
+        // For now, we won't delete the bundle immediately to allow inspection.
+        // In a real scenario, delete after successful transfer or if transfer fails to start.
+        // QFile::remove(QString::fromStdString(bundleFilePathStd));
+    } else {
+        if(networkLogDisplay) networkLogDisplay->append("<font color='red'>Failed to create bundle for '" + repoToBundle.displayName.toHtmlEscaped() + "': " + QString::fromStdString(errorMsgBundle).toHtmlEscaped() + "</font>");
+    }
 }

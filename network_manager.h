@@ -11,6 +11,8 @@
 #include <QMap>
 #include "identity_manager.h"
 #include "repository_manager.h" // <<< NEW INCLUDE
+#include <QMetaType> // <<< ADD OR ENSURE THIS IS PRESENT
+
 
 // Updated DiscoveredPeerInfo struct
 struct DiscoveredPeerInfo {
@@ -22,7 +24,7 @@ struct DiscoveredPeerInfo {
     // QList<QString> publicRepoAppIds; // Alternative: Use appIds if names aren't unique enough
     qint64 lastSeen;
 };
-// Q_DECLARE_METATYPE(DiscoveredPeerInfo) // If needed for QVariant
+Q_DECLARE_METATYPE(DiscoveredPeerInfo) // If needed for QVariant
 
 class NetworkManager : public QObject {
     Q_OBJECT
@@ -58,6 +60,9 @@ public:
     void acceptPendingTcpConnection(QTcpSocket* pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket* pendingSocket);
 
+    void sendRepoBundleRequest(QTcpSocket* targetPeerSocket, const QString& repoDisplayName, const QString& requesterLocalPath);
+    QTcpSocket* getSocketForPeer(const QString& peerUsername); // Helper
+
 signals:
     // ... (TCP Signals - same)
     void incomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
@@ -70,6 +75,12 @@ signals:
     // ... (UDP Discovery Signals - lanPeerDiscoveredOrUpdated will carry the new DiscoveredPeerInfo)
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
     void lanPeerLost(const QString& peerUsername);
+    void repoBundleRequestedByPeer(QTcpSocket* requestingPeerSocket, const QString& sourcePeerUsername, const QString& repoDisplayName, const QString& clientWantsToSaveAt);
+    // For requester side, to update UI on progress or completion
+    void repoBundleChunkReceived(const QString& repoName, int chunkIndex, int totalChunks); // If sending chunks
+    void repoBundleCompleted(const QString& repoName, const QString& localBundlePath, bool success, const QString& message);
+    void repoBundleTransferError(const QString& repoName, const QString& errorMessage);
+
 
 private slots:
     // ... (All private slots - same)

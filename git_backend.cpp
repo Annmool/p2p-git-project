@@ -3,6 +3,11 @@
 #include <ctime>    // For strftime
 #include <algorithm>// For std::min (if needed elsewhere)
 #include <filesystem> // For path checking in openRepository
+#include <QProcess> // For running git command line
+#include <QTemporaryFile> // For temporary bundle file name
+#include <QDir>
+#include <QFileInfo>
+#include <QDebug> // For qDebug
 
 // GitBackend Constructor and Destructor
 GitBackend::GitBackend() {
@@ -61,6 +66,67 @@ bool GitBackend::openRepository(const std::string& path, std::string& error_mess
     return true;
 }
 
+bool GitBackend::createBundle(const std::string& outputDirStr, const std::string& bundleNameSuggestion, std::string& outBundleFilePath, std::string& error_message) {
+    if (!isRepositoryOpen()) {
+        error_message = "No repository is open to create a bundle from.";
+        return false;
+    }
+
+    QDir outputDir(QString::fromStdString(outputDirStr));
+    if (!outputDir.exists()) {
+        if (!outputDir.mkpath(".")) {
+            error_message = "Could not create output directory for bundle: " + outputDirStr;
+            return false;
+        }
+    }
+
+    QString safeBundleName = QString::fromStdString(bundleNameSuggestion);
+    safeBundleName.remove(QRegExp(QStringLiteral("[^a-zA-Z0-9_.-]")));
+    if(safeBundleName.isEmpty()) safeBundleName = "repo";
+    if(!safeBundleName.endsWith(".bundle")) safeBundleName += ".bundle";
+    
+    QString bundleFilePathQ = outputDir.filePath(safeBundleName);
+    outBundleFilePath = bundleFilePathQ.toStdString();
+
+    QProcess gitProcess;
+    gitProcess.setWorkingDirectory(QString::fromStdString(m_currentRepoPath));
+    QStringList arguments;
+    arguments << "bundle" << "create" << bundleFilePathQ << "--all";
+
+    qDebug() << "GitBackend: Running git" << arguments.join(" ") << "in" << QString::fromStdString(m_currentRepoPath);
+
+    gitProcess.start("git", arguments);
+    if (!gitProcess.waitForStarted(-1)) {
+        error_message = "Failed to start git bundle process: " + gitProcess.errorString().toStdString();
+        qWarning() << "GitBackend:" << QString::fromStdString(error_message);
+        return false;
+    }
+    if (!gitProcess.waitForFinished(-1)) {
+        error_message = "Git bundle process timed out or did not finish: " + gitProcess.errorString().toStdString();
+        qWarning() << "GitBackend:" << QString::fromStdString(error_message);
+        return false;
+    }
+
+    if (gitProcess.exitStatus() == QProcess::NormalExit && gitProcess.exitCode() == 0) {
+        if (QFile(bundleFilePathQ).exists()) {
+            error_message = "Bundle created successfully: " + outBundleFilePath;
+            qInfo() << "GitBackend:" << QString::fromStdString(error_message);
+            return true;
+        } else {
+            error_message = "Git bundle process finished but bundle file not found at: " + outBundleFilePath;
+            qWarning() << "GitBackend:" << QString::fromStdString(error_message);
+            qWarning() << "Git bundle stdout:" << QString(gitProcess.readAllStandardOutput());
+            qWarning() << "Git bundle stderr:" << QString(gitProcess.readAllStandardError());
+            return false;
+        }
+    } else {
+        error_message = "Git bundle process failed. Exit code: " + std::to_string(gitProcess.exitCode()) +
+                        ". Stderr: " + QString(gitProcess.readAllStandardError()).toStdString();
+        qWarning() << "GitBackend:" << QString::fromStdString(error_message);
+        std::remove(outBundleFilePath.c_str());
+        return false;
+    }
+}
 void GitBackend::closeRepository() {
     freeCurrentRepo();
 }

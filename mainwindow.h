@@ -22,12 +22,14 @@
 #include <QHostInfo>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QTreeWidget>      // For discoveredPeersTreeWidget
+#include <QTreeWidgetItem>  // For slot parameter
 
 // Project-Specific Includes
 #include "git_backend.h"
-#include "network_manager.h"
+#include "network_manager.h"    // Includes DiscoveredPeerInfo
 #include "identity_manager.h"
-#include "repository_manager.h"
+#include "repository_manager.h" // Includes ManagedRepositoryInfo
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -40,8 +42,8 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-private slots:
-     // Git Operations
+private slots: // <<< ONLY ONE 'private slots:' needed here
+    // Git Operations
     void onInitRepoClicked();
     void onOpenRepoClicked();
     void onRefreshLogClicked();
@@ -49,15 +51,16 @@ private slots:
     void onCheckoutBranchClicked();
 
     // Repository Management
-    void onAddManagedRepoClicked(); 
+    void onAddManagedRepoClicked();
+    void onManagedRepoDoubleClicked(QListWidgetItem* item);
 
     // Network Control & Actions
     void onToggleDiscoveryAndTcpServerClicked();
-    void onDiscoveredPeerDoubleClicked(QListWidgetItem* item);
+    void onDiscoveredPeerOrRepoSelected(QTreeWidgetItem* current, QTreeWidgetItem* previous); // For QTreeWidget
+    void onCloneSelectedRepoClicked();
     void onSendMessageClicked();
 
     // NetworkManager Signal Handlers
-    // ... (all your handle... slots are correctly declared here) ...
     void handleTcpServerStatusChanged(bool listening, quint16 port, const QString& error);
     void handleIncomingTcpConnectionRequest(QTcpSocket* pendingSocket, const QHostAddress& address, quint16 port, const QString& discoveredUsername);
     void handleNewTcpPeerConnected(QTcpSocket* peerSocket, const QString& peerUsername, const QString& peerPublicKeyHex);
@@ -66,15 +69,15 @@ private slots:
     void handleTcpConnectionStatusChanged(const QString& peerUsername, const QString& peerPublicKeyHex, bool connected, const QString& error);
     void handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo& peerInfo);
     void handleLanPeerLost(const QString& peerUsername);
+    void handleRepoBundleRequest(QTcpSocket* requestingPeerSocket, const QString& sourcePeerUsername, const QString& repoDisplayName, const QString& clientWantsToSaveAt);
 
     // RepositoryManager Signal Handlers
     void handleRepositoryListChanged();
-    void onManagedRepoDoubleClicked(QListWidgetItem* item);
 
 private:
     void setupUi();
-    void setupRepoManagementUi(QSplitter* parentSplitter); 
-    void setupNetworkUi(QSplitter* parentSplitter);        
+    void setupRepoManagementUi(QSplitter* parentSplitter);
+    void setupNetworkUi(QSplitter* parentSplitter);
 
     void updateRepositoryStatus();
     void loadCommitLog();
@@ -94,11 +97,11 @@ private:
     QComboBox *branchComboBox;
     QPushButton *refreshBranchesButton;
     QPushButton *checkoutBranchButton;
-    QTextEdit *messageLog;
+    QTextEdit *messageLog; // General Git operation status
 
     // UI Elements - Repository Management
     QFrame* repoManagementFrame;
-    QListWidget* managedReposListWidget;
+    QListWidget* managedReposListWidget; // For listing managed repos
     QPushButton* addManagedRepoButton;
 
     // UI Elements - Network
@@ -106,11 +109,12 @@ private:
     QLabel* myPeerInfoLabel;
     QPushButton* toggleDiscoveryButton;
     QLabel* tcpServerStatusLabel;
-    QListWidget* discoveredPeersList;
-    QListWidget* connectedTcpPeersList;
+    QTreeWidget* discoveredPeersTreeWidget; // Changed from QListWidget
+    QPushButton* cloneSelectedRepoButton;   // Button to clone repo selected in tree
+    QListWidget* connectedTcpPeersList;   // For established TCP connections
     QLineEdit* messageInput;
     QPushButton* sendMessageButton;
-    QTextEdit* networkLogDisplay;
+    QTextEdit* networkLogDisplay;         // For network/chat messages
 
     // Backend/Manager Instances
     GitBackend gitBackend;

@@ -60,6 +60,34 @@ QString NetworkManager::getPeerDisplayString(QTcpSocket* socket) {
     return socket->peerAddress().toString() + ":" + QString::number(socket->peerPort());
 }
 
+QTcpSocket* NetworkManager::getSocketForPeer(const QString& peerUsername) {
+    for (QTcpSocket* socket : qAsConst(m_allTcpSockets)) {
+        if (m_socketToPeerUsernameMap.value(socket) == peerUsername) {
+            return socket;
+        }
+    }
+    return nullptr;
+}
+
+void NetworkManager::sendRepoBundleRequest(QTcpSocket* targetPeerSocket, const QString& repoDisplayName, const QString& requesterLocalPath) {
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState) {
+        qWarning() << "NM: Cannot send RepoBundleRequest, target socket not connected.";
+        // emit repoBundleTransferError(repoDisplayName, "Target peer not connected."); // Requester side error
+        return;
+    }
+
+    QByteArray block;
+    QDataStream out(&block, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_5_15);
+    QString messageType = "REQUEST_REPO_BUNDLE";
+
+    out << messageType << m_myUsername << repoDisplayName << requesterLocalPath; // Send our username, requested repo, and where we plan to save
+
+    targetPeerSocket->write(block);
+    qDebug() << "NM: Sent REQUEST_REPO_BUNDLE for" << repoDisplayName << "to" << getPeerDisplayString(targetPeerSocket)
+             << "My path:" << requesterLocalPath;
+}
+
 // --- TCP Server --- (startTcpServer, stopTcpServer, getTcpServerPort - same as previous "connection approval" version)
 bool NetworkManager::startTcpServer(quint16 port) { /* ... */ 
     if (m_tcpServer->isListening()) { emit tcpServerStatusChanged(true, m_tcpServer->serverPort(), "Already listening."); return true; }
@@ -258,7 +286,25 @@ void NetworkManager::processIncomingTcpData(QTcpSocket* socket, const QByteArray
             if (in.status() == QDataStream::Ok) {
                 QString senderUsername = m_socketToPeerUsernameMap.value(socket, "UnknownPeer");
                 emit tcpMessageReceived(socket, senderUsername, chatMessage);
-            } else { qDebug() << "NM: Invalid CHAT_MESSAGE payload from" << getPeerDisplayString(socket); in.device()->seek(startPos); return; }
+            } 
+             else if (messageType == "REQUEST_REPO_BUNDLE") {
+            QString requestingPeerUsername, requestedRepoDisplayName, requesterLocalPath;
+            in >> requestingPeerUsername >> requestedRepoDisplayName >> requesterLocalPath;
+
+            if (in.status() == QDataStream::Ok && !requestingPeerUsername.isEmpty() && !requestedRepoDisplayName.isEmpty()) {
+                qDebug() << "NM: Received REQUEST_REPO_BUNDLE from" << requestingPeerUsername
+                         << "for repo" << requestedRepoDisplayName << "(they want to save at " << requesterLocalPath << ")";
+                
+                // Emit signal for MainWindow (Provider side) to handle this request
+                // (i.e., check if repo is public, then call GitBackend to create bundle)
+                emit repoBundleRequestedByPeer(socket, requestingPeerUsername, requestedRepoDisplayName, requesterLocalPath);
+
+            } else {
+                qWarning() << "NM: Malformed REQUEST_REPO_BUNDLE from" << getPeerDisplayString(socket);
+                // Optionally send an error back to the requester
+            }
+        }
+            else { qDebug() << "NM: Invalid CHAT_MESSAGE payload from" << getPeerDisplayString(socket); in.device()->seek(startPos); return; }
         } else { qDebug() << "NM: Unknown TCP type:" << messageType << "from" << getPeerDisplayString(socket); return; }
     }
 }
