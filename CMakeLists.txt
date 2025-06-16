@@ -21,7 +21,7 @@ add_executable(${PROJECT_NAME}
     git_backend.cpp
     network_manager.cpp
     identity_manager.cpp
-    repository_manager.cpp # Ensure this is added
+    repository_manager.cpp
 )
 
 # --- Include Directories ---
@@ -29,8 +29,8 @@ include_directories(${GIT2_INCLUDE_DIRS})
 include_directories(${SODIUM_INCLUDE_DIRS})
 
 # --- Link Libraries to the Defined Target ---
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    Qt5::Widgets 
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Qt5::Widgets
     Qt5::Network
     ${GIT2_LIBRARIES}
     ${SODIUM_LIBRARIES}
