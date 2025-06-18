@@ -3,15 +3,14 @@
 
 #include <string>
 #include <vector>
-#include <sodium.h>
-#include <QString> // <<< ADDED for constructor parameter
+#include <sodium.h> 
+#include <QString> 
 
 const size_t ID_PUBLIC_KEY_BYTES = crypto_sign_PUBLICKEYBYTES;
 const size_t ID_SECRET_KEY_BYTES = crypto_sign_SECRETKEYBYTES;
 
 class IdentityManager {
 public:
-    // MODIFIED CONSTRUCTOR SIGNATURE
     explicit IdentityManager(const QString& peerNameForPath = QString("DefaultPeerIdentity"), const std::string& appName = "P2PGitClient");
     ~IdentityManager();
 

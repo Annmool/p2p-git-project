@@ -8,12 +8,11 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # --- Find Packages ---
-find_package(Qt5 REQUIRED COMPONENTS Widgets Network) 
-# find_package(Qt5 REQUIRED COMPONENTS Network) # This line is commented out, which is fine if the combined one works
+find_package(Qt5 REQUIRED COMPONENTS Widgets Network)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GIT2 REQUIRED libgit2)
-pkg_check_modules(SODIUM REQUIRED libsodium) # For libsodium
+pkg_check_modules(SODIUM REQUIRED libsodium)
 
 # --- Define Your Executable Target ---
 add_executable(${PROJECT_NAME}
@@ -21,25 +20,18 @@ add_executable(${PROJECT_NAME}
     mainwindow.cpp
     git_backend.cpp
     network_manager.cpp
-    identity_manager.cpp 
-) # <--- CORRECTED TO A CLOSING PARENTHESIS
+    identity_manager.cpp
+    repository_manager.cpp
+)
 
 # --- Include Directories ---
 include_directories(${GIT2_INCLUDE_DIRS})
-include_directories(${SODIUM_INCLUDE_DIRS}) # Add libsodium includes
-# Qt5 include directories are usually handled by linking targets
+include_directories(${SODIUM_INCLUDE_DIRS})
 
 # --- Link Libraries to the Defined Target ---
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    Qt5::Widgets 
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Qt5::Widgets
     Qt5::Network
     ${GIT2_LIBRARIES}
-    ${SODIUM_LIBRARIES} # Link libsodium
+    ${SODIUM_LIBRARIES}
 )
-
-# Optional: Link stdc++fs if std::filesystem causes issues on your compiler
-# if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG)
-#   if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0") # Example for older GCC
-#     target_link_libraries(${PROJECT_NAME} PRIVATE stdc++fs)
-#   endif()
-# endif()

@@ -35,6 +35,9 @@ public:
     std::vector<CommitInfo> getCommitLog(int max_commits, std::string& error_message, const std::string& specific_ref_name_or_sha = "");
     std::vector<std::string> listBranches(BranchType type, std::string& error_message);
     bool checkoutBranch(const std::string& branch_name, std::string& error_message);
+  
+    bool createBundle(const std::string& outputDir, const std::string& bundleNameSuggestion, std::string& outBundleFilePath, std::string& error_message);
+
     std::string getCurrentBranch(std::string& error_message);
 
 private:
