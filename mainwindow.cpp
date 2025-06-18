@@ -12,6 +12,9 @@
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 #include <QStandardPaths>
+#include <QProcess>
+#include <QUuid>
+#include <QStyle>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -38,7 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     }
     else
     {
-        m_myUsername = name_prompt_default;
+        m_myUsername = name_from_dialog;
     }
 
     m_identityManager_ptr = new IdentityManager(m_myUsername);
@@ -73,9 +76,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(addManagedRepoButton, &QPushButton::clicked, this, &MainWindow::onAddManagedRepoClicked);
     connect(managedReposListWidget, &QListWidget::itemDoubleClicked, this, &MainWindow::onManagedRepoDoubleClicked);
     connect(m_repoManager_ptr, &RepositoryManager::managedRepositoryListChanged, this, &MainWindow::handleRepositoryListChanged);
+    m_peerDisconnectedIcon = this->style()->standardIcon(QStyle::SP_ComputerIcon);
+    m_peerConnectedIcon = this->style()->standardIcon(QStyle::SP_DialogYesButton);
 
     if (m_networkManager_ptr)
     {
+        connect(connectToPeerButton, &QPushButton::clicked, this, &MainWindow::onConnectToPeerClicked);
         connect(toggleDiscoveryButton, &QPushButton::clicked, this, &MainWindow::onToggleDiscoveryAndTcpServerClicked);
         connect(sendMessageButton, &QPushButton::clicked, this, &MainWindow::onSendMessageClicked);
         connect(discoveredPeersTreeWidget, &QTreeWidget::currentItemChanged, this, &MainWindow::onDiscoveredPeerOrRepoSelected);
@@ -90,6 +96,7 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_networkManager_ptr, &NetworkManager::lanPeerLost, this, &MainWindow::handleLanPeerLost);
         connect(m_networkManager_ptr, &NetworkManager::repoBundleRequestedByPeer, this, &MainWindow::handleRepoBundleRequest);
         connect(m_networkManager_ptr, &NetworkManager::repoBundleCompleted, this, &MainWindow::handleRepoBundleCompleted);
+        connect(m_networkManager_ptr, &NetworkManager::repoBundleSent, this, &MainWindow::handleRepoBundleSent);
     }
 
     updateRepositoryStatus();
@@ -123,6 +130,10 @@ void MainWindow::updateNetworkUiState()
     sendMessageButton->setEnabled(networkReady);
     discoveredPeersTreeWidget->setEnabled(networkReady);
     connectedTcpPeersList->setEnabled(networkReady);
+
+    // Buttons that depend on selection are handled in their own slot
+    connectToPeerButton->setEnabled(false);
+    cloneSelectedRepoButton->setEnabled(false);
 
     if (networkReady)
     {
@@ -173,7 +184,7 @@ void MainWindow::setupUi()
     setupRepoManagementUi(overallSplitter);
     setupNetworkUi(overallSplitter);
 
-    overallSplitter->setSizes({500, 350});
+    overallSplitter->setSizes({550, 400});
 }
 
 void MainWindow::setupRepoManagementUi(QSplitter *parentSplitter)
@@ -186,7 +197,6 @@ void MainWindow::setupRepoManagementUi(QSplitter *parentSplitter)
     commitLogDisplay = new QTextEdit(repoManagementFrame);
     commitLogDisplay->setReadOnly(true);
     commitLogDisplay->setFontFamily("monospace");
-    commitLogDisplay->setLineWrapMode(QTextEdit::NoWrap);
     mainLayout->addWidget(commitLogDisplay, 1);
     refreshLogButton = new QPushButton("Refresh Log", repoManagementFrame);
     mainLayout->addWidget(refreshLogButton);
@@ -203,7 +213,6 @@ void MainWindow::setupRepoManagementUi(QSplitter *parentSplitter)
 
     mainLayout->addWidget(new QLabel("<b>Managed Repositories:</b>", repoManagementFrame));
     managedReposListWidget = new QListWidget(repoManagementFrame);
-    managedReposListWidget->setToolTip("List of repositories. Double-click to open.");
     mainLayout->addWidget(managedReposListWidget, 1);
     addManagedRepoButton = new QPushButton("Add Local Folder to Manage", repoManagementFrame);
     mainLayout->addWidget(addManagedRepoButton);
@@ -211,7 +220,6 @@ void MainWindow::setupRepoManagementUi(QSplitter *parentSplitter)
     mainLayout->addWidget(new QLabel("<b>Operation Status:</b>", repoManagementFrame));
     messageLog = new QTextEdit(repoManagementFrame);
     messageLog->setReadOnly(true);
-    messageLog->setPlaceholderText("Git operation status messages will appear here...");
     messageLog->setMaximumHeight(100);
     mainLayout->addWidget(messageLog);
 
@@ -223,12 +231,10 @@ void MainWindow::setupNetworkUi(QSplitter *parentSplitter)
     networkFrame = new QFrame(parentSplitter);
     networkFrame->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *networkVLayout = new QVBoxLayout(networkFrame);
-    networkVLayout->addWidget(new QLabel("<b>P2P Network (UDP Discovery):</b>", networkFrame));
-
+    networkVLayout->addWidget(new QLabel("<b>P2P Network:</b>", networkFrame));
     myPeerInfoLabel = new QLabel(this);
     myPeerInfoLabel->setWordWrap(true);
     networkVLayout->addWidget(myPeerInfoLabel);
-
     toggleDiscoveryButton = new QPushButton("Start Discovery & TCP Server", networkFrame);
     networkVLayout->addWidget(toggleDiscoveryButton);
     tcpServerStatusLabel = new QLabel("TCP Server: Inactive", networkFrame);
@@ -237,28 +243,33 @@ void MainWindow::setupNetworkUi(QSplitter *parentSplitter)
     discoveredPeersTreeWidget = new QTreeWidget(networkFrame);
     discoveredPeersTreeWidget->setHeaderLabels(QStringList() << "Peer / Repository" << "Details");
     discoveredPeersTreeWidget->setColumnCount(2);
-    discoveredPeersTreeWidget->setColumnWidth(0, 220);
-    discoveredPeersTreeWidget->setToolTip("Select a repository under a peer to enable Clone button.");
+    discoveredPeersTreeWidget->setColumnWidth(0, 200);
     networkVLayout->addWidget(discoveredPeersTreeWidget, 1);
-    cloneSelectedRepoButton = new QPushButton("Clone Selected Repository", networkFrame);
-    cloneSelectedRepoButton->setEnabled(false);
-    networkVLayout->addWidget(cloneSelectedRepoButton);
+    QHBoxLayout *actionButtonLayout = new QHBoxLayout();
+    connectToPeerButton = new QPushButton("Connect to Peer", networkFrame);
+    cloneSelectedRepoButton = new QPushButton("Clone Repository", networkFrame);
+    actionButtonLayout->addWidget(connectToPeerButton);
+    actionButtonLayout->addWidget(cloneSelectedRepoButton);
+    networkVLayout->addLayout(actionButtonLayout);
+
+    // <<< FIX: Restore the "Established TCP Connections" list to the UI >>>
     networkVLayout->addWidget(new QLabel("Established TCP Connections:", networkFrame));
     connectedTcpPeersList = new QListWidget(networkFrame);
-    connectedTcpPeersList->setMaximumHeight(100);
+    connectedTcpPeersList->setMaximumHeight(80);
     networkVLayout->addWidget(connectedTcpPeersList);
+
     QHBoxLayout *messageSendLayout = new QHBoxLayout();
     messageInput = new QLineEdit(networkFrame);
-    messageInput->setPlaceholderText("Enter message (broadcast to TCP peers)...");
+    messageInput->setPlaceholderText("Enter message to broadcast...");
     messageSendLayout->addWidget(messageInput, 1);
-    sendMessageButton = new QPushButton("Send Broadcast", networkFrame);
+    sendMessageButton = new QPushButton("Send", networkFrame);
     messageSendLayout->addWidget(sendMessageButton);
     networkVLayout->addLayout(messageSendLayout);
-    networkVLayout->addWidget(new QLabel("Network Log/Chat:", networkFrame));
+    networkVLayout->addWidget(new QLabel("Network Log:", networkFrame));
     networkLogDisplay = new QTextEdit(networkFrame);
     networkLogDisplay->setReadOnly(true);
     networkLogDisplay->setFontFamily("monospace");
-    networkVLayout->addWidget(networkLogDisplay, 2);
+    networkVLayout->addWidget(networkLogDisplay, 1);
     parentSplitter->addWidget(networkFrame);
 }
 
@@ -813,22 +824,6 @@ void MainWindow::onToggleDiscoveryAndTcpServerClicked()
     }
 }
 
-void MainWindow::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
-{
-    Q_UNUSED(previous);
-    if (!cloneSelectedRepoButton)
-        return;
-
-    cloneSelectedRepoButton->setEnabled(false);
-    if (current)
-    {
-        if (current->parent())
-        { // If it has a parent, it's a repo item
-            cloneSelectedRepoButton->setEnabled(true);
-        }
-    }
-}
-
 void MainWindow::onCloneSelectedRepoClicked()
 {
     if (!m_networkManager_ptr || !m_repoManager_ptr || !discoveredPeersTreeWidget)
@@ -883,40 +878,37 @@ void MainWindow::onCloneSelectedRepoClicked()
     }
 
     // 4. Set pending request state
+
     m_pendingCloneRequest.peerId = parentPeerUsername;
     m_pendingCloneRequest.repoName = repoNameToClone;
     m_pendingCloneRequest.localClonePath = fullLocalClonePath;
-    qDebug() << "Pending clone request set. Peer:" << m_pendingCloneRequest.peerId << "Repo:" << m_pendingCloneRequest.repoName;
 
-    // 5. Check for existing connection OR get peer info for a new connection
     QTcpSocket *providerSocket = m_networkManager_ptr->getSocketForPeer(parentPeerUsername);
 
+    // If we are fully connected for a standard connection, send the request.
     if (providerSocket && providerSocket->state() == QAbstractSocket::ConnectedState)
     {
-        qDebug() << "Peer is already connected. Sending repo bundle request directly.";
         networkLogDisplay->append(QString("Requesting to clone '%1' from connected peer '%2'...").arg(repoNameToClone, parentPeerUsername));
         m_networkManager_ptr->sendRepoBundleRequest(providerSocket, repoNameToClone, fullLocalClonePath);
     }
     else
     {
-        qDebug() << "Peer not connected. Looking up peer info in NetworkManager...";
-
-        // <<< THE CRITICAL FIX IS HERE >>>
-        // Instead of relying on the UI item's data, we get the definitive peer info directly from the manager.
+        // If not connected, we initiate a connection. The logic now handles both public (no prompt)
+        // and private (prompt) connections.
         DiscoveredPeerInfo providerPeerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(parentPeerUsername);
-
-        // Check if the peer is still in the discovered list. They might have gone offline.
         if (providerPeerInfo.id.isEmpty())
         {
-            QMessageBox::critical(this, "Connection Error", QString("Could not find peer '%1'. They may have gone offline. Please wait for them to reappear in the list.").arg(parentPeerUsername));
+            QMessageBox::critical(this, "Connection Error", "Could not find peer. They may have gone offline.");
             m_pendingCloneRequest.clear();
             return;
         }
 
-        networkLogDisplay->append(QString("<font color='blue'>Initiating connection to '%1' to clone '%2'...</font>").arg(parentPeerUsername, repoNameToClone));
-        m_networkManager_ptr->connectToTcpPeer(providerPeerInfo.address, providerPeerInfo.tcpPort, providerPeerInfo.id);
-    }
+        // This is a simplified check. A more robust system would check a flag on the repo item itself.
+        bool isPublicRepo = true; // Assuming all discovered repos are public for this logic.
 
+        networkLogDisplay->append(QString("<font color='blue'>Initiating connection to '%1' to clone '%2'...</font>").arg(parentPeerUsername, repoNameToClone));
+        m_networkManager_ptr->connectToTcpPeer(providerPeerInfo.address, providerPeerInfo.tcpPort, providerPeerInfo.id, isPublicRepo);
+    }
     cloneSelectedRepoButton->setEnabled(false);
 }
 
@@ -937,6 +929,39 @@ void MainWindow::onSendMessageClicked()
     if (networkLogDisplay)
         networkLogDisplay->append("<font color=\"blue\"><b>Me (Broadcast):</b> " + message.toHtmlEscaped() + "</font>");
     messageInput->clear();
+}
+
+void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername)
+{
+    if (!m_networkManager_ptr)
+        return;
+
+    // This dialog is now only for peers who want to establish a full, persistent connection.
+    // Public repo clone requests are handled automatically by the NetworkManager.
+
+    QString pkh;
+    DiscoveredPeerInfo peerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(discoveredUsername);
+    if (!peerInfo.publicKeyHex.isEmpty())
+    {
+        pkh = " (PKH: " + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8) + "...)";
+    }
+    QString peerDisplay = !discoveredUsername.isEmpty() ? discoveredUsername + pkh : address.toString();
+
+    QMessageBox::StandardButton reply = QMessageBox::question(this, "Peer Connection Request",
+                                                              QString("Peer '%1' wants to establish a connection with you. Accept?").arg(peerDisplay.toHtmlEscaped()),
+                                                              QMessageBox::Yes | QMessageBox::No);
+
+    if (m_networkManager_ptr->isConnectionPending(pendingSocket))
+    {
+        if (reply == QMessageBox::Yes)
+        {
+            m_networkManager_ptr->acceptPendingTcpConnection(pendingSocket);
+        }
+        else
+        {
+            m_networkManager_ptr->rejectPendingTcpConnection(pendingSocket);
+        }
+    }
 }
 
 void MainWindow::handleTcpServerStatusChanged(bool listening, quint16 port, const QString &error)
@@ -976,80 +1001,60 @@ void MainWindow::handleTcpServerStatusChanged(bool listening, quint16 port, cons
     }
 }
 
-void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername)
+void MainWindow::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
-    if (!m_networkManager_ptr || !networkLogDisplay)
+    Q_UNUSED(previous);
+    if (!current)
+    {
+        connectToPeerButton->setEnabled(false);
+        cloneSelectedRepoButton->setEnabled(false);
+        return;
+    }
+    if (current->parent())
+    { // It's a repository
+        connectToPeerButton->setEnabled(false);
+        cloneSelectedRepoButton->setEnabled(true);
+    }
+    else
+    { // It's a peer
+        cloneSelectedRepoButton->setEnabled(false);
+        // Only enable "Connect" if the peer is NOT already connected.
+        QString peerUsername = current->text(0);
+        bool isConnected = (m_networkManager_ptr && m_networkManager_ptr->getSocketForPeer(peerUsername));
+        connectToPeerButton->setEnabled(!isConnected);
+    }
+}
+
+void MainWindow::onConnectToPeerClicked()
+{
+    if (!m_networkManager_ptr || !discoveredPeersTreeWidget)
+        return;
+    QTreeWidgetItem *currentItem = discoveredPeersTreeWidget->currentItem();
+    if (!currentItem || currentItem->parent())
         return;
 
-    // <<< FIX: This logic now correctly prioritizes the discovered username for the dialog box >>>
-    QString peerDisplay;
-    // If we found a username, use it. This is the main part of the fix.
-    if (!discoveredUsername.isEmpty() && !discoveredUsername.startsWith("Unknown"))
+    QString peerUsername = currentItem->text(0);
+    if (m_networkManager_ptr->getSocketForPeer(peerUsername))
     {
-        peerDisplay = discoveredUsername;
+        QMessageBox::information(this, "Already Connected", "You are already connected to " + peerUsername);
+        return;
     }
-    else
+    DiscoveredPeerInfo peerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(peerUsername);
+    if (peerInfo.id.isEmpty())
     {
-        // As a fallback ONLY if the username could not be found, show the IP and port.
-        peerDisplay = address.toString() + ":" + QString::number(port);
+        QMessageBox::critical(this, "Connection Error", "Could not find peer info. They may have gone offline.");
+        return;
     }
-
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(this, "Incoming Connection Request",
-                                  // Use the clean peerDisplay variable here.
-                                  QString("Accept incoming TCP connection from peer '%1'?").arg(peerDisplay.toHtmlEscaped()),
-                                  QMessageBox::Yes | QMessageBox::No);
-
-    if (reply == QMessageBox::Yes)
-    {
-        networkLogDisplay->append("<font color=\"blue\">User accepted connection from " + peerDisplay.toHtmlEscaped() + "</font>");
-        m_networkManager_ptr->acceptPendingTcpConnection(pendingSocket);
-    }
-    else
-    {
-        networkLogDisplay->append("<font color=\"orange\">User rejected connection from " + peerDisplay.toHtmlEscaped() + "</font>");
-        m_networkManager_ptr->rejectPendingTcpConnection(pendingSocket);
-    }
+    networkLogDisplay->append(QString("<font color='blue'>Initiating connection to peer '%1'...</font>").arg(peerUsername));
+    m_networkManager_ptr->connectToTcpPeer(peerInfo.address, peerInfo.tcpPort, peerInfo.id);
 }
 
 void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex)
 {
-    if (!connectedTcpPeersList || !networkLogDisplay)
+    if (!networkLogDisplay || !connectedTcpPeersList)
         return;
-    Q_UNUSED(peerSocket);
-    QString fullPeerDisplayId = peerUsername;
-    if (peerSocket)
-    {
-        fullPeerDisplayId += " (" + peerSocket->peerAddress().toString() + ":" + QString::number(peerSocket->peerPort()) + ")";
-    }
-    if (!peerPublicKeyHex.isEmpty())
-    {
-        fullPeerDisplayId += " [PKH: " + QCryptographicHash::hash(peerPublicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8) + "]";
-    }
 
-    for (int i = 0; i < connectedTcpPeersList->count(); ++i)
-    {
-        if (connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername)
-        {
-            connectedTcpPeersList->item(i)->setText(fullPeerDisplayId);
-            return;
-        }
-    }
-    QListWidgetItem *newItem = new QListWidgetItem(fullPeerDisplayId, connectedTcpPeersList);
-    newItem->setData(Qt::UserRole, peerUsername);
-    networkLogDisplay->append("<font color=\"green\">TCP Peer fully connected: " + peerUsername.toHtmlEscaped() + "</font>");
-    if (m_pendingCloneRequest.isValid() && m_pendingCloneRequest.peerId == peerUsername)
-    {
-        networkLogDisplay->append(QString("<font color='green'>Connection to '%1' established. Sending clone request...</font>").arg(peerUsername));
-        m_networkManager_ptr->sendRepoBundleRequest(peerSocket, m_pendingCloneRequest.repoName, m_pendingCloneRequest.localClonePath);
-    }
-}
-
-void MainWindow::handleTcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername)
-{
-    if (!connectedTcpPeersList || !networkLogDisplay)
-        return;
-    Q_UNUSED(peerSocket);
+    // Remove any existing entry to avoid duplicates
     for (int i = 0; i < connectedTcpPeersList->count(); ++i)
     {
         if (connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername)
@@ -1058,6 +1063,82 @@ void MainWindow::handleTcpPeerDisconnected(QTcpSocket *peerSocket, const QString
             break;
         }
     }
+
+    // Add the new connection
+    QString pkh = QCryptographicHash::hash(peerPublicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
+    QString displayString = QString("%1 (%2) [PKH:%3]").arg(peerUsername, peerSocket->peerAddress().toString(), pkh);
+    QListWidgetItem *newItem = new QListWidgetItem(m_peerConnectedIcon, displayString);
+    newItem->setData(Qt::UserRole, peerUsername);
+    connectedTcpPeersList->addItem(newItem);
+
+    // Update the discovery tree
+    QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerUsername, Qt::MatchExactly, 0);
+    if (!foundItems.isEmpty())
+    {
+        QTreeWidgetItem *peerItem = foundItems.first();
+        peerItem->setIcon(0, m_peerConnectedIcon);
+        peerItem->setForeground(0, QBrush(QColor("lime")));
+    }
+    else
+    {
+        QTreeWidgetItem *peerItem = new QTreeWidgetItem(discoveredPeersTreeWidget);
+        peerItem->setText(0, peerUsername);
+        peerItem->setIcon(0, m_peerConnectedIcon);
+        peerItem->setForeground(0, QBrush(QColor("lime")));
+    }
+
+    // Update button states
+    QTreeWidgetItem *currentItem = discoveredPeersTreeWidget->currentItem();
+    if (currentItem && !currentItem->parent() && currentItem->text(0) == peerUsername)
+    {
+        onDiscoveredPeerOrRepoSelected(currentItem, nullptr);
+    }
+
+    networkLogDisplay->append("<font color=\"green\">TCP Peer fully connected: " + peerUsername.toHtmlEscaped() + "</font>");
+
+    // Handle pending clone request
+    if (m_pendingCloneRequest.isValid() && m_pendingCloneRequest.peerId == peerUsername)
+    {
+        networkLogDisplay->append(QString("<font color='green'>Connection established. Sending clone request for '%1'.</font>").arg(m_pendingCloneRequest.repoName.toHtmlEscaped()));
+        m_networkManager_ptr->sendRepoBundleRequest(peerSocket, m_pendingCloneRequest.repoName, m_pendingCloneRequest.localClonePath);
+    }
+}
+
+void MainWindow::handleTcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername)
+{
+    if (!networkLogDisplay)
+        return;
+    Q_UNUSED(peerSocket);
+
+    // 1. Remove from the dedicated "Established TCP Connections" list
+    if (connectedTcpPeersList)
+    {
+        for (int i = 0; i < connectedTcpPeersList->count(); ++i)
+        {
+            if (connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername)
+            {
+                delete connectedTcpPeersList->takeItem(i);
+                break;
+            }
+        }
+    }
+
+    // 2. Revert visual state in the main discovery tree
+    QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerUsername, Qt::MatchExactly, 0);
+    if (!foundItems.isEmpty())
+    {
+        QTreeWidgetItem *peerItem = foundItems.first();
+        peerItem->setIcon(0, m_peerDisconnectedIcon);
+        peerItem->setForeground(0, this->palette().color(QPalette::WindowText));
+    }
+
+    // 3. Update button state if they were selected
+    QTreeWidgetItem *currentItem = discoveredPeersTreeWidget->currentItem();
+    if (currentItem && !currentItem->parent() && currentItem->text(0) == peerUsername)
+    {
+        onDiscoveredPeerOrRepoSelected(currentItem, nullptr);
+    }
+
     networkLogDisplay->append("<font color=\"orange\">TCP Peer disconnected: " + peerUsername.toHtmlEscaped() + "</font>");
 }
 
@@ -1086,45 +1167,51 @@ void MainWindow::handleTcpConnectionStatusChanged(const QString &peerUsernameOrA
 void MainWindow::handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo)
 {
     if (!discoveredPeersTreeWidget)
-        return; // Use TreeWidget
+    {
+        qWarning() << "MW: handleLanPeerDiscoveredOrUpdated: discoveredPeersTreeWidget not initialized.";
+        return;
+    }
 
-    QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerInfo.id, Qt::MatchExactly | Qt::MatchRecursive, 0);
+    qDebug() << "MW: Updating discovered peer" << peerInfo.id << "address" << peerInfo.address.toString() << "tcpPort" << peerInfo.tcpPort;
+
+    QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerInfo.id, Qt::MatchExactly, 0);
     QTreeWidgetItem *peerItem = nullptr;
-
-    QString pkHashStr = QString(QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(6)); // Convert to QString
-    QString peerDetails = QString("(%1:%2) [PKH:%3]")
-                              .arg(peerInfo.address.toString())
-                              .arg(peerInfo.tcpPort)
-                              .arg(pkHashStr); // <<< USE THE QSTRING VARIABLE
+    QString pkHashStr = QString(QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(6));
+    QString peerDetails = QString("(%1) [PKH:%2]").arg(peerInfo.address.toString(), pkHashStr);
 
     if (foundItems.isEmpty())
     {
         peerItem = new QTreeWidgetItem(discoveredPeersTreeWidget);
         peerItem->setText(0, peerInfo.id);
-        discoveredPeersTreeWidget->addTopLevelItem(peerItem);
+        qDebug() << "MW: Created new tree item for peer" << peerInfo.id;
     }
     else
     {
         peerItem = foundItems.first();
+        qDebug() << "MW: Found existing tree item for peer" << peerInfo.id;
     }
+
+    bool isConnected = (m_networkManager_ptr && m_networkManager_ptr->getSocketForPeer(peerInfo.id) && m_networkManager_ptr->getSocketForPeer(peerInfo.id)->state() == QAbstractSocket::ConnectedState);
+    peerItem->setIcon(0, isConnected ? m_peerConnectedIcon : m_peerDisconnectedIcon);
+    peerItem->setForeground(0, isConnected ? QBrush(QColor("lime")) : QBrush(this->palette().color(QPalette::WindowText)));
     peerItem->setText(1, peerDetails);
-    peerItem->setData(0, Qt::UserRole, QVariant::fromValue(peerInfo)); // Store full DiscoveredPeerInfo on peer item
 
-    // Clear existing repo children before re-adding to prevent duplicates
+    qDebug() << "MW: Set peer" << peerInfo.id << "icon to" << (isConnected ? "connected" : "disconnected") << "and color to" << (isConnected ? "lime" : "default");
+
     qDeleteAll(peerItem->takeChildren());
-
-    if (!peerInfo.publicRepoNames.isEmpty())
+    for (const QString &repoName : peerInfo.publicRepoNames)
     {
-        for (const QString &repoName : peerInfo.publicRepoNames)
-        {
-            QTreeWidgetItem *repoItem = new QTreeWidgetItem(peerItem);
-            repoItem->setText(0, "  └── " + repoName);
-            repoItem->setData(0, Qt::UserRole, repoName);        // Store repo name
-            repoItem->setData(0, Qt::UserRole + 1, peerInfo.id); // Store parent peer ID
-            repoItem->setText(1, "Public");
-        }
-        peerItem->setExpanded(true);
+        QTreeWidgetItem *repoItem = new QTreeWidgetItem(peerItem);
+        repoItem->setText(0, "  " + repoName);
+        repoItem->setData(0, Qt::UserRole, repoName);
+        repoItem->setData(0, Qt::UserRole + 1, peerInfo.id);
+        repoItem->setText(1, "Public");
+        qDebug() << "MW: Added repo" << repoName << "to peer" << peerInfo.id;
     }
+    peerItem->setExpanded(true);
+
+    discoveredPeersTreeWidget->update();
+    qDebug() << "MW: Forced UI refresh for discoveredPeersTreeWidget.";
 }
 
 void MainWindow::handleLanPeerLost(const QString &peerUsername)
@@ -1266,4 +1353,12 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
 
     QFile::remove(localBundlePath);
     m_pendingCloneRequest.clear();
+}
+void MainWindow::handleRepoBundleSent(const QString &repoName, const QString &recipientUsername)
+{
+    if (networkLogDisplay)
+    {
+        networkLogDisplay->append(QString("<font color='purple'>Successfully sent bundle for '%1' to peer '%2'.</font>")
+                                      .arg(repoName.toHtmlEscaped(), recipientUsername.toHtmlEscaped()));
+    }
 }

@@ -37,7 +37,7 @@ public:
     bool startTcpServer(quint16 port = 0);
     void stopTcpServer();
     quint16 getTcpServerPort() const;
-    bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername);
+    bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername, bool isPublicRepoClone = false);
     void disconnectAllTcpPeers();
     bool hasActiveTcpConnections() const;
     bool startUdpDiscovery(quint16 udpPort = 45454);
@@ -51,6 +51,7 @@ public:
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
+    bool isConnectionPending(QTcpSocket *socket) const;
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
@@ -65,6 +66,7 @@ signals:
     void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
     void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
+    void repoBundleSent(const QString &repoName, const QString &recipientUsername);
 
 private slots:
     void onNewTcpConnection();
@@ -77,7 +79,6 @@ private slots:
     void onPeerCleanupTimerTimeout();
 
 private:
-    // <<< FIX: The complete struct with the state enum is defined here.
     struct IncomingFileTransfer
     {
         enum TransferState
@@ -112,6 +113,8 @@ private:
     void processIncomingTcpData(QTcpSocket *socket, const QByteArray &data);
     void sendIdentityOverTcp(QTcpSocket *socket);
     void setupAcceptedSocket(QTcpSocket *socket);
+    void setupPublicRepoSocket(QTcpSocket *socket);
+    QString findUsernameForAddress(const QHostAddress &address);
 };
 
 #endif // NETWORK_MANAGER_H

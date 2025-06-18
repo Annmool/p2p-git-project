@@ -25,7 +25,8 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QProcess>
-#include <QCloseEvent> // <<< FIX: Added the full include for QCloseEvent
+#include <QCloseEvent>
+#include <QIcon>
 
 // Project-Specific Includes
 #include "git_backend.h"
@@ -64,6 +65,7 @@ private slots:
     void onToggleDiscoveryAndTcpServerClicked();
     void onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
     void onCloneSelectedRepoClicked();
+    void onConnectToPeerClicked();
     void onSendMessageClicked();
     void handleTcpServerStatusChanged(bool listening, quint16 port, const QString &error);
     void handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
@@ -76,6 +78,7 @@ private slots:
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void handleRepositoryListChanged();
+    void handleRepoBundleSent(const QString &repoName, const QString &recipientUsername);
 
 private:
     void setupUi();
@@ -86,8 +89,9 @@ private:
     void loadBranchList();
     void loadCommitLogForBranch(const std::string &branchName);
     void updateNetworkUiState();
+    QIcon m_peerDisconnectedIcon;
+    QIcon m_peerConnectedIcon;
 
-    // <<< FIX: The complete and correct struct definition
     struct PendingCloneRequest
     {
         QString peerId;
@@ -110,6 +114,7 @@ private:
     QLineEdit *repoPathInput, *messageInput;
     QPushButton *initRepoButton, *openRepoButton, *refreshLogButton, *refreshBranchesButton, *checkoutBranchButton;
     QPushButton *addManagedRepoButton, *toggleDiscoveryButton, *cloneSelectedRepoButton, *sendMessageButton;
+    QPushButton *connectToPeerButton;
     QLabel *currentRepoLabel, *currentBranchLabel, *myPeerInfoLabel, *tcpServerStatusLabel;
     QTextEdit *commitLogDisplay, *messageLog, *networkLogDisplay;
     QComboBox *branchComboBox;
