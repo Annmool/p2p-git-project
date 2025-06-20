@@ -37,7 +37,9 @@ public:
     bool startTcpServer(quint16 port = 0);
     void stopTcpServer();
     quint16 getTcpServerPort() const;
-    bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername, bool isPublicRepoClone = false);
+    bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername);
+    void connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath);
+    void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
     void disconnectAllTcpPeers();
     bool hasActiveTcpConnections() const;
     bool startUdpDiscovery(quint16 udpPort = 45454);
@@ -47,7 +49,6 @@ public:
     void broadcastTcpMessage(const QString &message);
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
-    void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
@@ -113,7 +114,6 @@ private:
     void processIncomingTcpData(QTcpSocket *socket, const QByteArray &data);
     void sendIdentityOverTcp(QTcpSocket *socket);
     void setupAcceptedSocket(QTcpSocket *socket);
-    void setupPublicRepoSocket(QTcpSocket *socket);
     QString findUsernameForAddress(const QHostAddress &address);
 };
 

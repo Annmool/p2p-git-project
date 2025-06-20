@@ -828,32 +828,24 @@ void MainWindow::onCloneSelectedRepoClicked()
 {
     if (!m_networkManager_ptr || !m_repoManager_ptr || !discoveredPeersTreeWidget)
     {
-        QMessageBox::critical(this, "Fatal Error", "Core services are not ready. Please restart the application.");
-        qCritical() << "onCloneSelectedRepoClicked: A core manager is null!";
+        QMessageBox::critical(this, "Fatal Error", "Core services are not ready.");
         return;
     }
-
     QTreeWidgetItem *currentItem = discoveredPeersTreeWidget->currentItem();
-    // 1. Basic check: Is anything selected, and is it a repository (i.e., has a parent)?
     if (!currentItem || !currentItem->parent())
     {
-        QMessageBox::warning(this, "Selection Error", "Please select a specific repository from a peer to clone.");
+        QMessageBox::warning(this, "Selection Error", "Please select a specific repository to clone.");
         return;
     }
-
     QString repoNameToClone = currentItem->data(0, Qt::UserRole).toString();
     QString parentPeerUsername = currentItem->data(0, Qt::UserRole + 1).toString();
 
-    qDebug() << "Clone initiated for repo:" << repoNameToClone << "from peer:" << parentPeerUsername;
-
-    // 2. Check for re-cloning (this logic is correct)
+    // Check for re-cloning
     for (const auto &managedRepo : m_repoManager_ptr->getAllManagedRepositories())
     {
         if (managedRepo.clonedFromPeerId == parentPeerUsername && managedRepo.clonedFromRepoName == repoNameToClone)
         {
-            if (QMessageBox::question(this, "Repository Already Cloned",
-                                      "You appear to have already cloned this repository.\n\nDo you want to clone it again to a new location?",
-                                      QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
+            if (QMessageBox::question(this, "Repository Already Cloned", "You appear to have already cloned this repository.\n\nDo you want to clone it again?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
             {
                 return;
             }
@@ -861,14 +853,10 @@ void MainWindow::onCloneSelectedRepoClicked()
         }
     }
 
-    // 3. Get destination path from user
-    QString localClonePathBase = QFileDialog::getExistingDirectory(this, "Select Base Directory to Clone Into",
-                                                                   QDir::homePath() + "/P2P_Clones");
+    // Get destination path
+    QString localClonePathBase = QFileDialog::getExistingDirectory(this, "Select Base Directory to Clone Into", QDir::homePath() + "/P2P_Clones");
     if (localClonePathBase.isEmpty())
-    {
-        qDebug() << "User cancelled folder selection for clone.";
         return;
-    }
 
     QString fullLocalClonePath = QDir(localClonePathBase).filePath(repoNameToClone);
     if (QDir(fullLocalClonePath).exists())
@@ -877,38 +865,26 @@ void MainWindow::onCloneSelectedRepoClicked()
         return;
     }
 
-    // 4. Set pending request state
+    // Set pending request state
 
     m_pendingCloneRequest.peerId = parentPeerUsername;
     m_pendingCloneRequest.repoName = repoNameToClone;
     m_pendingCloneRequest.localClonePath = fullLocalClonePath;
 
-    QTcpSocket *providerSocket = m_networkManager_ptr->getSocketForPeer(parentPeerUsername);
-
-    // If we are fully connected for a standard connection, send the request.
-    if (providerSocket && providerSocket->state() == QAbstractSocket::ConnectedState)
+    // Cloning a public repo ALWAYS uses a new, temporary connection.
+    DiscoveredPeerInfo providerPeerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(parentPeerUsername);
+    if (providerPeerInfo.id.isEmpty())
     {
-        networkLogDisplay->append(QString("Requesting to clone '%1' from connected peer '%2'...").arg(repoNameToClone, parentPeerUsername));
-        m_networkManager_ptr->sendRepoBundleRequest(providerSocket, repoNameToClone, fullLocalClonePath);
+        QMessageBox::critical(this, "Connection Error", "Could not find peer info. They may have gone offline.");
+        m_pendingCloneRequest.clear();
+        return;
     }
-    else
-    {
-        // If not connected, we initiate a connection. The logic now handles both public (no prompt)
-        // and private (prompt) connections.
-        DiscoveredPeerInfo providerPeerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(parentPeerUsername);
-        if (providerPeerInfo.id.isEmpty())
-        {
-            QMessageBox::critical(this, "Connection Error", "Could not find peer. They may have gone offline.");
-            m_pendingCloneRequest.clear();
-            return;
-        }
 
-        // This is a simplified check. A more robust system would check a flag on the repo item itself.
-        bool isPublicRepo = true; // Assuming all discovered repos are public for this logic.
+    networkLogDisplay->append(QString("<font color='blue'>Initiating clone for '%1' from peer '%2'...</font>").arg(repoNameToClone, parentPeerUsername));
 
-        networkLogDisplay->append(QString("<font color='blue'>Initiating connection to '%1' to clone '%2'...</font>").arg(parentPeerUsername, repoNameToClone));
-        m_networkManager_ptr->connectToTcpPeer(providerPeerInfo.address, providerPeerInfo.tcpPort, providerPeerInfo.id, isPublicRepo);
-    }
+    // The key change: The initiator now sends a REQUEST_REPO_BUNDLE as its FIRST message on a new socket.
+    m_networkManager_ptr->connectAndRequestBundle(providerPeerInfo.address, providerPeerInfo.tcpPort, m_myUsername, repoNameToClone, fullLocalClonePath);
+
     cloneSelectedRepoButton->setEnabled(false);
 }
 
@@ -936,9 +912,6 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, c
     if (!m_networkManager_ptr)
         return;
 
-    // This dialog is now only for peers who want to establish a full, persistent connection.
-    // Public repo clone requests are handled automatically by the NetworkManager.
-
     QString pkh;
     DiscoveredPeerInfo peerInfo = m_networkManager_ptr->getDiscoveredPeerInfo(discoveredUsername);
     if (!peerInfo.publicKeyHex.isEmpty())
@@ -947,13 +920,22 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, c
     }
     QString peerDisplay = !discoveredUsername.isEmpty() ? discoveredUsername + pkh : address.toString();
 
-    QMessageBox::StandardButton reply = QMessageBox::question(this, "Peer Connection Request",
-                                                              QString("Peer '%1' wants to establish a connection with you. Accept?").arg(peerDisplay.toHtmlEscaped()),
-                                                              QMessageBox::Yes | QMessageBox::No);
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("Peer Connection Request");
+    msgBox.setText(QString("Peer '%1' wants to establish a connection with you. Accept?").arg(peerDisplay.toHtmlEscaped()));
+    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    msgBox.setDefaultButton(QMessageBox::No);
 
+    // This timer ensures that if the user does nothing, it's a "No"
+    QTimer::singleShot(30000, &msgBox, &QMessageBox::reject);
+
+    int result = msgBox.exec();
+
+    // After the user clicks (or it times out), check if the connection is still pending.
+    // It might have been disconnected in the background.
     if (m_networkManager_ptr->isConnectionPending(pendingSocket))
     {
-        if (reply == QMessageBox::Yes)
+        if (result == QMessageBox::Yes)
         {
             m_networkManager_ptr->acceptPendingTcpConnection(pendingSocket);
         }
@@ -1051,33 +1033,34 @@ void MainWindow::onConnectToPeerClicked()
 
 void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex)
 {
-    if (!networkLogDisplay || !connectedTcpPeersList)
+    if (!connectedTcpPeersList || !networkLogDisplay)
         return;
 
-    // Remove any existing entry to avoid duplicates
+    // Add to the "Established TCP Connections" list
+    bool alreadyInList = false;
     for (int i = 0; i < connectedTcpPeersList->count(); ++i)
     {
         if (connectedTcpPeersList->item(i)->data(Qt::UserRole).toString() == peerUsername)
         {
-            delete connectedTcpPeersList->takeItem(i);
+            alreadyInList = true;
             break;
         }
     }
+    if (!alreadyInList)
+    {
+        QString pkh = QCryptographicHash::hash(peerPublicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
+        QString displayString = QString("%1 (%2) [PKH:%3]").arg(peerUsername, peerSocket->peerAddress().toString(), pkh);
+        QListWidgetItem *newItem = new QListWidgetItem(m_peerConnectedIcon, displayString);
+        newItem->setData(Qt::UserRole, peerUsername);
+        connectedTcpPeersList->addItem(newItem);
+    }
 
-    // Add the new connection
-    QString pkh = QCryptographicHash::hash(peerPublicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
-    QString displayString = QString("%1 (%2) [PKH:%3]").arg(peerUsername, peerSocket->peerAddress().toString(), pkh);
-    QListWidgetItem *newItem = new QListWidgetItem(m_peerConnectedIcon, displayString);
-    newItem->setData(Qt::UserRole, peerUsername);
-    connectedTcpPeersList->addItem(newItem);
-
-    // Update the discovery tree
+    // Update the main discovery tree visual state
     QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerUsername, Qt::MatchExactly, 0);
     if (!foundItems.isEmpty())
     {
-        QTreeWidgetItem *peerItem = foundItems.first();
-        peerItem->setIcon(0, m_peerConnectedIcon);
-        peerItem->setForeground(0, QBrush(QColor("lime")));
+        foundItems.first()->setIcon(0, m_peerConnectedIcon);
+        foundItems.first()->setForeground(0, QBrush(QColor("lime")));
     }
     else
     {
@@ -1087,7 +1070,7 @@ void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString
         peerItem->setForeground(0, QBrush(QColor("lime")));
     }
 
-    // Update button states
+    // Update button states if this peer is currently selected
     QTreeWidgetItem *currentItem = discoveredPeersTreeWidget->currentItem();
     if (currentItem && !currentItem->parent() && currentItem->text(0) == peerUsername)
     {
@@ -1095,13 +1078,6 @@ void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString
     }
 
     networkLogDisplay->append("<font color=\"green\">TCP Peer fully connected: " + peerUsername.toHtmlEscaped() + "</font>");
-
-    // Handle pending clone request
-    if (m_pendingCloneRequest.isValid() && m_pendingCloneRequest.peerId == peerUsername)
-    {
-        networkLogDisplay->append(QString("<font color='green'>Connection established. Sending clone request for '%1'.</font>").arg(m_pendingCloneRequest.repoName.toHtmlEscaped()));
-        m_networkManager_ptr->sendRepoBundleRequest(peerSocket, m_pendingCloneRequest.repoName, m_pendingCloneRequest.localClonePath);
-    }
 }
 
 void MainWindow::handleTcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername)
@@ -1358,7 +1334,7 @@ void MainWindow::handleRepoBundleSent(const QString &repoName, const QString &re
 {
     if (networkLogDisplay)
     {
-        networkLogDisplay->append(QString("<font color='purple'>Successfully sent bundle for '%1' to peer '%2'.</font>")
+        networkLogDisplay->append(QString("<font color='purple'>Sent bundle for '%1' to peer '%2'.</font>")
                                       .arg(repoName.toHtmlEscaped(), recipientUsername.toHtmlEscaped()));
     }
 }
