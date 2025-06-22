@@ -1036,7 +1036,9 @@ void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString
     if (!connectedTcpPeersList || !networkLogDisplay)
         return;
 
-    // Add to the "Established TCP Connections" list
+    qDebug() << "MW:" << m_myUsername << "handleNewTcpPeerConnected for" << peerUsername;
+
+    // Add or update the peer in the "Established TCP Connections" list
     bool alreadyInList = false;
     for (int i = 0; i < connectedTcpPeersList->count(); ++i)
     {
@@ -1053,9 +1055,10 @@ void MainWindow::handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString
         QListWidgetItem *newItem = new QListWidgetItem(m_peerConnectedIcon, displayString);
         newItem->setData(Qt::UserRole, peerUsername);
         connectedTcpPeersList->addItem(newItem);
+        qDebug() << "MW:" << m_myUsername << "added" << peerUsername << "to connectedTcpPeersList";
     }
 
-    // Update the main discovery tree visual state
+    // Update the discovery tree visual state
     QList<QTreeWidgetItem *> foundItems = discoveredPeersTreeWidget->findItems(peerUsername, Qt::MatchExactly, 0);
     if (!foundItems.isEmpty())
     {
