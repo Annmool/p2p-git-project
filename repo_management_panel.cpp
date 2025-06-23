@@ -2,11 +2,12 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
+#include <QListWidget>
 #include <QListWidgetItem>
+#include <QTextEdit>
 #include <QDir>
 #include <QMessageBox>
-#include <QPushButton>
-#include <QTextEdit>
 
 RepoManagementPanel::RepoManagementPanel(QWidget *parent) : QWidget(parent)
 {
@@ -83,10 +84,12 @@ void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &rep
                 itemText += QString("<br><small><i>Owner: You</i></small>");
             }
 
-            QListWidgetItem *item = new QListWidgetItem(m_managedReposListWidget);
+            QListWidgetItem *item = new QListWidgetItem();
             QLabel *itemLabel = new QLabel(itemText);
             itemLabel->setWordWrap(true);
             item->setSizeHint(itemLabel->sizeHint());
+
+            m_managedReposListWidget->addItem(item);
             m_managedReposListWidget->setItemWidget(item, itemLabel);
 
             item->setData(Qt::UserRole, repoInfo.appId);
@@ -105,7 +108,7 @@ void RepoManagementPanel::onRepoDoubleClicked(QListWidgetItem *item)
 {
     if (!item)
         return;
-    emit openRepoInGitPanel(item->toolTip());
+    emit openRepoInGitPanel(item->data(Qt::UserRole).toString());
 }
 
 void RepoManagementPanel::onRepoSelectionChanged()

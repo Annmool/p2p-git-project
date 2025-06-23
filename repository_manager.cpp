@@ -16,8 +16,15 @@ const QString JSON_KEY_COLLABORATORS = "collaborators";
 const QString JSON_KEY_ORIGIN_PEER_ID = "originPeerId";
 
 RepositoryManager::RepositoryManager(const QString &storageFilePath, QObject *parent)
-    : QObject(parent), m_storageFilePath(storageFilePath) { loadRepositoriesFromFile(); }
-RepositoryManager::~RepositoryManager() { saveRepositoriesToFile(); }
+    : QObject(parent), m_storageFilePath(storageFilePath)
+{
+    loadRepositoriesFromFile();
+}
+
+RepositoryManager::~RepositoryManager()
+{
+    saveRepositoriesToFile();
+}
 
 bool RepositoryManager::addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId)
 {
@@ -25,8 +32,12 @@ bool RepositoryManager::addManagedRepository(const QString &localPath, const QSt
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
         if (QDir(repo.localPath).canonicalPath() == canonicalPath)
+        {
+            qWarning() << "Repository at path" << localPath << "is already managed.";
             return false;
+        }
     }
+
     ManagedRepositoryInfo newRepo;
     newRepo.appId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     newRepo.localPath = canonicalPath;
@@ -34,10 +45,12 @@ bool RepositoryManager::addManagedRepository(const QString &localPath, const QSt
     newRepo.isPublic = isPublic;
     newRepo.adminPeerId = adminPeerId;
     newRepo.originPeerId = originPeerId;
+
     m_managedRepositories.insert(newRepo.appId, newRepo);
     emit managedRepositoryListChanged();
     return saveRepositoriesToFile();
 }
+
 bool RepositoryManager::removeManagedRepository(const QString &appId)
 {
     if (m_managedRepositories.remove(appId) > 0)
@@ -47,6 +60,7 @@ bool RepositoryManager::removeManagedRepository(const QString &appId)
     }
     return false;
 }
+
 bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPublic)
 {
     if (m_managedRepositories.contains(appId))
@@ -57,6 +71,7 @@ bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPub
     }
     return false;
 }
+
 bool RepositoryManager::addCollaborator(const QString &appId, const QString &peerId)
 {
     if (m_managedRepositories.contains(appId) && !m_managedRepositories[appId].collaborators.contains(peerId))
@@ -67,14 +82,30 @@ bool RepositoryManager::addCollaborator(const QString &appId, const QString &pee
     }
     return false;
 }
+
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfo(const QString &appId) const
 {
     return m_managedRepositories.value(appId, ManagedRepositoryInfo());
 }
+
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByPath(const QString &localPath) const
+{
+    const QString canonicalPath = QDir(localPath).canonicalPath();
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (QDir(repoInfo.localPath).canonicalPath() == canonicalPath)
+        {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
 QList<ManagedRepositoryInfo> RepositoryManager::getAllManagedRepositories() const
 {
     return m_managedRepositories.values();
 }
+
 QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(const QString &requestingPeer) const
 {
     QList<ManagedRepositoryInfo> repos;
@@ -87,11 +118,13 @@ QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(
     }
     return repos;
 }
+
 QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const QString &myPeerId) const
 {
     QList<ManagedRepositoryInfo> privateRepos;
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
+        // Only return private repos that this user actually owns
         if (!repo.isPublic && repo.adminPeerId == myPeerId)
         {
             privateRepos.append(repo);

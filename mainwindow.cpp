@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "network_panel.h"
 #include "repo_management_panel.h"
+#include "project_window.h"
 #include "git_backend.h"
 #include "identity_manager.h"
 #include "repository_manager.h"
@@ -60,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupUi();
     connectSignals();
+    m_networkPanel->setNetworkManager(m_networkManager);
 
     m_networkPanel->setMyPeerInfo(m_myUsername, QString::fromStdString(m_identityManager->getMyPublicKeyHex()));
     updateUiFromBackend();
@@ -116,7 +118,7 @@ void MainWindow::connectSignals()
 
         connect(m_networkManager, &NetworkManager::tcpMessageReceived, this, [this](QTcpSocket *socket, const QString &peer, const QString &msg)
                 {
-            Q_UNUSED(socket);
+            Q_UNUSED(socket); // We don't need the socket pointer in the UI panel for this log message
             m_networkPanel->logChatMessage(peer, msg); });
 
         connect(m_networkManager, &NetworkManager::repoBundleSent, this, [this](const QString &repoName, const QString &recipient)
@@ -127,7 +129,7 @@ void MainWindow::connectSignals()
             { handleAddManagedRepo(); });
     connect(m_repoManagementPanel, &RepoManagementPanel::modifyAccessClicked, this, &MainWindow::handleModifyRepoAccess);
     connect(m_repoManagementPanel, &RepoManagementPanel::deleteRepoClicked, this, &MainWindow::handleDeleteRepo);
-    connect(m_repoManagementPanel, &RepoManagementPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInGitPanel);
+    connect(m_repoManagementPanel, &RepoManagementPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
 
     connect(m_networkPanel, &NetworkPanel::toggleDiscoveryRequested, this, &MainWindow::handleToggleDiscovery);
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
@@ -191,7 +193,7 @@ void MainWindow::handleModifyRepoAccess(const QString &appId)
     ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
     if (repoInfo.adminPeerId != m_myUsername)
     {
-        QMessageBox::warning(this, "Access Denied", "Only the original owner of a repository can modify its access.");
+        QMessageBox::warning(this, "Access Denied", "Only the owner can modify access.");
         return;
     }
     bool makePublic = !repoInfo.isPublic;
@@ -214,19 +216,42 @@ void MainWindow::handleDeleteRepo(const QString &appId)
     }
 }
 
-void MainWindow::handleOpenRepoInGitPanel(const QString &path)
+// void MainWindow::handleOpenRepoInGitPanel(const QString &path)
+// {
+//     if (path.isEmpty())
+//         return;
+//     std::string error;
+//     if (m_gitBackend->openRepository(path.toStdString(), error))
+//     {
+//         m_repoManagementPanel->logStatus("Repository opened: " + path);
+//         // This is where you would update the git panel with new commit logs etc.
+//     }
+//     else
+//     {
+//         m_repoManagementPanel->logStatus("Error opening repository: " + QString::fromStdString(error), true);
+//     }
+// }
+
+void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
 {
-    if (path.isEmpty())
-        return;
-    std::string error;
-    if (m_gitBackend->openRepository(path.toStdString(), error))
+    ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
+    if (!repoInfo.appId.isEmpty())
     {
-        m_repoManagementPanel->logStatus("Repository opened: " + path);
-        // This is where you would update the git panel with new commit logs etc.
-    }
-    else
-    {
-        m_repoManagementPanel->logStatus("Error opening repository: " + QString::fromStdString(error), true);
+        for (ProjectWindow *window : m_projectWindows)
+        {
+            if (window->property("repoPath") == repoInfo.localPath)
+            {
+                window->activateWindow();
+                return;
+            }
+        }
+        ProjectWindow *projectWindow = new ProjectWindow(repoInfo.localPath);
+        projectWindow->setAttribute(Qt::WA_DeleteOnClose);
+        projectWindow->setProperty("repoPath", repoInfo.localPath);
+        m_projectWindows.append(projectWindow);
+        connect(projectWindow, &QObject::destroyed, this, [this, projectWindow]()
+                { m_projectWindows.removeAll(projectWindow); });
+        projectWindow->show();
     }
 }
 
@@ -308,24 +333,18 @@ void MainWindow::handleSendMessage(const QString &message)
 
 void MainWindow::handleAddCollaborator(const QString &peerId)
 {
-    if (!m_repoManager || !m_networkManager)
-        return;
-
     QList<ManagedRepositoryInfo> privateRepos = m_repoManager->getMyPrivateRepositories(m_myUsername);
-
     if (privateRepos.isEmpty())
     {
-        QMessageBox::information(this, "No Private Repositories", "You do not have any private repositories that you own to share.");
+        QMessageBox::information(this, "No Private Repositories", "You do not have any private repositories that you own.");
         return;
     }
-
     QDialog dialog(this);
     dialog.setWindowTitle("Share Private Repositories");
     QVBoxLayout layout(&dialog);
     QListWidget listWidget(&dialog);
     for (const auto &repo : privateRepos)
     {
-        // The check is already done by the function, but double-checking is fine
         if (repo.adminPeerId == m_myUsername)
         {
             auto *item = new QListWidgetItem(repo.displayName, &listWidget);
@@ -338,14 +357,12 @@ void MainWindow::handleAddCollaborator(const QString &peerId)
     QPushButton okButton("Share", &dialog);
     connect(&okButton, &QPushButton::clicked, &dialog, &QDialog::accept);
     layout.addWidget(&okButton);
-
     if (dialog.exec() == QDialog::Accepted)
     {
         for (auto *item : listWidget.selectedItems())
         {
             QString appId = item->data(Qt::UserRole).toString();
             m_repoManager->addCollaborator(appId, peerId);
-
             QVariantMap payload;
             payload["appId"] = appId;
             payload["repoName"] = item->text();
@@ -398,41 +415,42 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QH
     }
 }
 
-void MainWindow::onInitRepoClicked()
-{
-    QString qPath = QFileDialog::getExistingDirectory(this, "Select Folder to Initialize Repository In", QDir::homePath());
-    if (qPath.isEmpty())
-    {
-        return;
-    }
+// void MainWindow::onInitRepoClicked()
+// {
+//     QString qPath = QFileDialog::getExistingDirectory(this, "Select Folder to Initialize Repository In", QDir::homePath());
+//     if (qPath.isEmpty())
+//     {
+//         return;
+//     }
 
-    std::string path = qPath.toStdString();
-    std::string errorMessage;
+//     std::string path = qPath.toStdString();
+//     std::string errorMessage;
 
-    if (m_gitBackend->initializeRepository(path, errorMessage))
-    {
-        m_repoManagementPanel->logStatus("Repository initialized successfully.", false);
-        // Ask to manage the new repo
-        if (QMessageBox::question(this, "Manage Repository", "Do you want to add this new repository to your managed list?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)
-        {
-            handleAddManagedRepo(qPath);
-        }
-    }
-    else
-    {
-        m_repoManagementPanel->logStatus("Error initializing repository: " + QString::fromStdString(errorMessage), true);
-    }
-}
+//     if (m_gitBackend->initializeRepository(path, errorMessage))
+//     {
+//         m_repoManagementPanel->logStatus("Repository initialized successfully.", false);
+//         // Ask to manage the new repo
+//         if (QMessageBox::question(this, "Manage Repository", "Do you want to add this new repository to your managed list?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)
+//         {
+//             handleAddManagedRepo(qPath);
+//         }
+//     }
+//     else
+//     {
+//         m_repoManagementPanel->logStatus("Error initializing repository: " + QString::fromStdString(errorMessage), true);
+//     }
+// }
 
-void MainWindow::onOpenRepoClicked()
-{
-    QString dirPath = QFileDialog::getExistingDirectory(this, "Open Git Repository", QDir::homePath());
-    if (!dirPath.isEmpty())
-    {
-        handleOpenRepoInGitPanel(dirPath);
-    }
-}
+// void MainWindow::onOpenRepoClicked()
+// {
+//     QString dirPath = QFileDialog::getExistingDirectory(this, "Open Git Repository", QDir::homePath());
+//     if (!dirPath.isEmpty())
+//     {
+//         handleOpenRepoInGitPanel(dirPath);
+//     }
+// }
 
+// This slot is executed on the SENDER's machine when they receive a clone request.
 void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt)
 {
     qDebug() << "MainWindow: Received bundle request for" << repoDisplayName << "from" << sourcePeerUsername;
@@ -505,21 +523,16 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
     }
 }
 
+// This slot is executed on the CLONER's machine when the bundle transfer finishes.
 void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message)
 {
-    // Re-enable the clone button which was disabled at the start of the process
-    if (m_networkPanel)
-    {
-        // This is a simplification; a more robust method would check if the current selection
-        // is still a repo before enabling.
-        // m_networkPanel->setCloneButtonEnabled(true);
-    }
+    // The clone button can be re-enabled now that the process is over.
+    // The onDiscoveredPeerOrRepoSelected slot will correctly handle enabling/disabling it.
 
     if (!success)
     {
+        m_networkPanel->logMessage(QString("Failed to receive repository '%1': %2").arg(repoName, message), Qt::red);
         QMessageBox::critical(this, "Clone Failed", QString("Failed to receive the repository bundle for '%1':\n%2").arg(repoName, message));
-        if (m_networkPanel)
-            m_networkPanel->logMessage("Clone failed: " + message, Qt::red);
         QFile::remove(localBundlePath);
         m_pendingCloneRequest.clear();
         return;
@@ -527,13 +540,12 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
 
     if (!m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoName != repoName)
     {
-        QMessageBox::warning(this, "Clone Warning", QString("Received a repository bundle for '%1', but was not expecting it.").arg(repoName));
-        QFile::remove(localBundlePath);
+        m_networkPanel->logMessage(QString("Received bundle for '%1', but was not expecting it. Saved to temp.").arg(repoName), QColor("orange"));
+        QMessageBox::warning(this, "Clone Warning", QString("Received a repository bundle for '%1', but was not expecting it. The temporary file has been saved at:\n%2").arg(repoName, localBundlePath));
         return;
     }
 
-    if (m_networkPanel)
-        m_networkPanel->logMessage(QString("Bundle for '%1' received. Cloning...").arg(repoName), "blue");
+    m_networkPanel->logMessage(QString("Bundle for '%1' received. Cloning...").arg(repoName), "blue");
     QString finalClonePath = m_pendingCloneRequest.localClonePath;
 
     QProcess gitProcess;
@@ -541,27 +553,31 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
 
     if (!gitProcess.waitForFinished(-1))
     {
+        m_networkPanel->logMessage("Clone failed: Git process timed out.", Qt::red);
         QMessageBox::critical(this, "Clone Failed", "Git clone process timed out.");
-        if (m_networkPanel)
-            m_networkPanel->logMessage("Clone failed: Git process timed out.", Qt::red);
     }
     else if (gitProcess.exitCode() == 0)
     {
+        m_networkPanel->logMessage(QString("Successfully cloned '%1'.").arg(repoName), Qt::darkGreen);
         QMessageBox::information(this, "Clone Successful", QString("Successfully cloned '%1' to:\n%2").arg(repoName, finalClonePath));
-        if (m_networkPanel)
-            m_networkPanel->logMessage(QString("Successfully cloned '%1'.").arg(repoName), Qt::darkGreen);
 
-        m_repoManager->addManagedRepository(finalClonePath, repoName, false, m_myUsername, m_pendingCloneRequest.peerId);
-
-        // <<< FIX: Call the correct function with the path argument >>>
-        handleOpenRepoInGitPanel(finalClonePath);
+        // Add the newly cloned repo to our managed list, preserving its origin info.
+        if (m_repoManager->addManagedRepository(finalClonePath, repoName, false, m_myUsername, m_pendingCloneRequest.peerId))
+        {
+            // <<< FIX: Look up the new repo by path to get its appId >>>
+            ManagedRepositoryInfo newRepoInfo = m_repoManager->getRepositoryInfoByPath(finalClonePath);
+            if (!newRepoInfo.appId.isEmpty())
+            {
+                // Now call the function to open the project window with the correct ID
+                handleOpenRepoInProjectWindow(newRepoInfo.appId);
+            }
+        }
     }
     else
     {
         QString errorMsg = QString(gitProcess.readAllStandardError());
+        m_networkPanel->logMessage("Clone failed: " + errorMsg, Qt::red);
         QMessageBox::critical(this, "Clone Failed", QString("The git clone command failed:\n%1").arg(errorMsg));
-        if (m_networkPanel)
-            m_networkPanel->logMessage("Clone failed: " + errorMsg, Qt::red);
     }
 
     QFile::remove(localBundlePath);

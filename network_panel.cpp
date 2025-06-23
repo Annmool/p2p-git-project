@@ -27,7 +27,6 @@ NetworkPanel::NetworkPanel(QWidget *parent) : QWidget(parent)
     connect(connectedTcpPeersList, &QListWidget::customContextMenuRequested, this, &NetworkPanel::showContextMenu);
 }
 
-// <<< FIX: The missing implementation is now here. >>>
 void NetworkPanel::setNetworkManager(NetworkManager *manager)
 {
     m_networkManager = manager;
