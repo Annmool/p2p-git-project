@@ -17,11 +17,17 @@ pkg_check_modules(SODIUM REQUIRED libsodium)
 # --- Define Your Executable Target ---
 add_executable(${PROJECT_NAME}
     main.cpp
-    mainwindow.cpp
+
+    # Core Backend
     git_backend.cpp
-    network_manager.cpp
     identity_manager.cpp
     repository_manager.cpp
+    network_manager.cpp
+
+    # Main Window and UI Panels
+    mainwindow.cpp
+    network_panel.cpp
+    repo_management_panel.cpp
 )
 
 # --- Include Directories ---
