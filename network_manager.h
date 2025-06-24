@@ -12,6 +12,7 @@
 #include <QMetaType>
 #include <QVariantMap>
 #include <QFile>
+#include <QSet>
 #include "identity_manager.h"
 
 class RepositoryManager;
@@ -56,6 +57,7 @@ public:
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
     QList<QString> getConnectedPeerIds() const;
     bool isConnectionPending(QTcpSocket *socket) const;
+    void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
@@ -99,6 +101,8 @@ private:
         qint64 bytesReceived = 0;
     };
     QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
+    QMap<QTcpSocket *, QByteArray> m_socketBuffers;
+    QSet<QTcpSocket *> m_handshakeSent;
 
     QTcpServer *m_tcpServer;
     QList<QTcpSocket *> m_allTcpSockets;
@@ -115,11 +119,12 @@ private:
     QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
 
     QString getPeerDisplayString(QTcpSocket *socket);
-    void processIncomingTcpData(QTcpSocket *socket, const QByteArray &data);
+    void processIncomingTcpData(QTcpSocket *socket);
     void sendIdentityOverTcp(QTcpSocket *socket);
     void setupAcceptedSocket(QTcpSocket *socket);
     QString findUsernameForAddress(const QHostAddress &address);
     void sendMessageToPeer(QTcpSocket *peerSocket, const QString &message);
+    void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
 };
 
 #endif // NETWORK_MANAGER_H

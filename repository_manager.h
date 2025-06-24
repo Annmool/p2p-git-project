@@ -35,6 +35,7 @@ public:
 
     ManagedRepositoryInfo getRepositoryInfo(const QString &appId) const;
     ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
+    ManagedRepositoryInfo getRepositoryInfoByDisplayName(const QString &displayName) const;
     QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
     QList<ManagedRepositoryInfo> getMyPubliclySharedRepositories(const QString &requestingPeer) const;
     QList<ManagedRepositoryInfo> getMyPrivateRepositories(const QString &myPeerId) const;

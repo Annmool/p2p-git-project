@@ -216,22 +216,6 @@ void MainWindow::handleDeleteRepo(const QString &appId)
     }
 }
 
-// void MainWindow::handleOpenRepoInGitPanel(const QString &path)
-// {
-//     if (path.isEmpty())
-//         return;
-//     std::string error;
-//     if (m_gitBackend->openRepository(path.toStdString(), error))
-//     {
-//         m_repoManagementPanel->logStatus("Repository opened: " + path);
-//         // This is where you would update the git panel with new commit logs etc.
-//     }
-//     else
-//     {
-//         m_repoManagementPanel->logStatus("Error opening repository: " + QString::fromStdString(error), true);
-//     }
-// }
-
 void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
 {
     ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
@@ -271,7 +255,6 @@ void MainWindow::handleConnectToPeer(const QString &peerId)
 
 void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
 {
-    // This is the implementation you provided, integrated here.
     if (!m_networkManager || !m_repoManager)
     {
         QMessageBox::critical(this, "Fatal Error", "Core services are not ready.");
@@ -301,10 +284,15 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
         return;
     }
 
+    m_pendingCloneRequest.peerId = peerId;
+    m_pendingCloneRequest.repoName = repoName;
+    m_pendingCloneRequest.localClonePath = fullLocalClonePath;
+
     DiscoveredPeerInfo providerPeerInfo = m_networkManager->getDiscoveredPeerInfo(peerId);
     if (providerPeerInfo.id.isEmpty())
     {
         QMessageBox::critical(this, "Connection Error", "Could not find peer info. They may have gone offline.");
+        m_pendingCloneRequest.clear();
         return;
     }
 
@@ -333,23 +321,28 @@ void MainWindow::handleSendMessage(const QString &message)
 
 void MainWindow::handleAddCollaborator(const QString &peerId)
 {
+    // FIX: Ensure we are actually connected to this peer.
+    if (!m_networkManager || m_networkManager->getSocketForPeer(peerId) == nullptr)
+    {
+        QMessageBox::warning(this, "Not Connected", QString("You must have an established TCP connection with '%1' to share repositories.").arg(peerId));
+        return;
+    }
+
     QList<ManagedRepositoryInfo> privateRepos = m_repoManager->getMyPrivateRepositories(m_myUsername);
     if (privateRepos.isEmpty())
     {
-        QMessageBox::information(this, "No Private Repositories", "You do not have any private repositories that you own.");
+        QMessageBox::information(this, "No Private Repositories", "You do not own any private repositories to share.");
         return;
     }
+
     QDialog dialog(this);
     dialog.setWindowTitle("Share Private Repositories");
     QVBoxLayout layout(&dialog);
     QListWidget listWidget(&dialog);
     for (const auto &repo : privateRepos)
     {
-        if (repo.adminPeerId == m_myUsername)
-        {
-            auto *item = new QListWidgetItem(repo.displayName, &listWidget);
-            item->setData(Qt::UserRole, repo.appId);
-        }
+        auto *item = new QListWidgetItem(repo.displayName, &listWidget);
+        item->setData(Qt::UserRole, repo.appId);
     }
     listWidget.setSelectionMode(QAbstractItemView::MultiSelection);
     layout.addWidget(new QLabel(QString("Select private repositories to share with '%1':").arg(peerId), &dialog));
@@ -357,11 +350,21 @@ void MainWindow::handleAddCollaborator(const QString &peerId)
     QPushButton okButton("Share", &dialog);
     connect(&okButton, &QPushButton::clicked, &dialog, &QDialog::accept);
     layout.addWidget(&okButton);
+
     if (dialog.exec() == QDialog::Accepted)
     {
         for (auto *item : listWidget.selectedItems())
         {
             QString appId = item->data(Qt::UserRole).toString();
+            ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
+
+            // FIX: Add a redundant but safe check here.
+            if (repoInfo.isPublic)
+            {
+                QMessageBox::warning(this, "Cannot Share Public Repo", QString("The repository '%1' is already public. You can only add collaborators to private repositories.").arg(repoInfo.displayName));
+                continue; // Skip this one
+            }
+
             m_repoManager->addCollaborator(appId, peerId);
             QVariantMap payload;
             payload["appId"] = appId;
@@ -378,7 +381,11 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
         QString repoName = payload["repoName"].toString();
         m_networkPanel->logMessage(QString("Peer '%1' has shared the private repository '%2' with you.").arg(peerId, repoName), "purple");
         QMessageBox::information(this, "Private Repository Shared", QString("Peer '%1' has granted you access to their private repository: '%2'.\nIt will now appear in their discovered list for you to clone.").arg(peerId, repoName));
-        m_networkManager->sendDiscoveryBroadcast();
+
+        if (m_networkManager)
+        {
+            m_networkManager->addSharedRepoToPeer(peerId, repoName);
+        }
     }
 }
 
@@ -397,7 +404,8 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QH
     msgBox.setText(QString("Peer '%1' wants to establish a connection with you. Accept?").arg(peerDisplay.toHtmlEscaped()));
     msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
     msgBox.setDefaultButton(QMessageBox::No);
-    QTimer::singleShot(30000, &msgBox, &QMessageBox::reject);
+
+    // The network manager handles the timeout now.
 
     if (msgBox.exec() == QMessageBox::Yes)
     {
@@ -415,42 +423,6 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QH
     }
 }
 
-// void MainWindow::onInitRepoClicked()
-// {
-//     QString qPath = QFileDialog::getExistingDirectory(this, "Select Folder to Initialize Repository In", QDir::homePath());
-//     if (qPath.isEmpty())
-//     {
-//         return;
-//     }
-
-//     std::string path = qPath.toStdString();
-//     std::string errorMessage;
-
-//     if (m_gitBackend->initializeRepository(path, errorMessage))
-//     {
-//         m_repoManagementPanel->logStatus("Repository initialized successfully.", false);
-//         // Ask to manage the new repo
-//         if (QMessageBox::question(this, "Manage Repository", "Do you want to add this new repository to your managed list?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)
-//         {
-//             handleAddManagedRepo(qPath);
-//         }
-//     }
-//     else
-//     {
-//         m_repoManagementPanel->logStatus("Error initializing repository: " + QString::fromStdString(errorMessage), true);
-//     }
-// }
-
-// void MainWindow::onOpenRepoClicked()
-// {
-//     QString dirPath = QFileDialog::getExistingDirectory(this, "Open Git Repository", QDir::homePath());
-//     if (!dirPath.isEmpty())
-//     {
-//         handleOpenRepoInGitPanel(dirPath);
-//     }
-// }
-
-// This slot is executed on the SENDER's machine when they receive a clone request.
 void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt)
 {
     qDebug() << "MainWindow: Received bundle request for" << repoDisplayName << "from" << sourcePeerUsername;
@@ -461,36 +433,21 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
         return;
     }
 
-    // 1. Find the requested repository in the list of managed repos.
-    ManagedRepositoryInfo repoToBundle;
-    bool found = false;
-    for (const auto &managedRepo : m_repoManager->getAllManagedRepositories())
-    {
-        if (managedRepo.displayName == repoDisplayName)
-        {
-            repoToBundle = managedRepo;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found)
+    ManagedRepositoryInfo repoToBundle = m_repoManager->getRepositoryInfoByDisplayName(repoDisplayName);
+    if (repoToBundle.appId.isEmpty())
     {
         m_networkPanel->logMessage(QString("Received bundle request for '%1', but it is not in the managed list.").arg(repoDisplayName.toHtmlEscaped()), Qt::red);
-        // TODO: Send REPO_NOT_FOUND error back to the requester
         return;
     }
 
-    // 2. Check permissions (Is it public? Or is the requester a collaborator?)
+    // Permission check already happened in NetworkManager, but a check here is good for defense-in-depth.
     bool canAccess = repoToBundle.isPublic || repoToBundle.collaborators.contains(sourcePeerUsername);
     if (!canAccess)
     {
         m_networkPanel->logMessage(QString("Denied bundle request for private repository '%1' from '%2'.").arg(repoDisplayName.toHtmlEscaped(), sourcePeerUsername.toHtmlEscaped()), Qt::red);
-        // TODO: Send ACCESS_DENIED error back
         return;
     }
 
-    // 3. Use a TEMPORARY GitBackend instance to create the bundle.
     GitBackend tempGitBackend;
     std::string errorMessage;
 
@@ -500,7 +457,6 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
         return;
     }
 
-    // 4. Create the bundle file in a temporary location.
     std::string bundleFilePathStd;
     std::string errorMsgBundle;
     QString tempBundleDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/P2PGitBundles/" + QUuid::createUuid().toString();
@@ -514,7 +470,6 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
     {
         m_networkPanel->logMessage(QString("Bundle created for '%1'. Starting transfer to %2...").arg(repoDisplayName.toHtmlEscaped(), sourcePeerUsername.toHtmlEscaped()), "purple");
 
-        // 5. Start the network transfer.
         m_networkManager->startSendingBundle(requestingPeerSocket, repoToBundle.displayName, QString::fromStdString(bundleFilePathStd));
     }
     else
@@ -523,12 +478,8 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
     }
 }
 
-// This slot is executed on the CLONER's machine when the bundle transfer finishes.
 void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message)
 {
-    // The clone button can be re-enabled now that the process is over.
-    // The onDiscoveredPeerOrRepoSelected slot will correctly handle enabling/disabling it.
-
     if (!success)
     {
         m_networkPanel->logMessage(QString("Failed to receive repository '%1': %2").arg(repoName, message), Qt::red);
@@ -561,14 +512,11 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
         m_networkPanel->logMessage(QString("Successfully cloned '%1'.").arg(repoName), Qt::darkGreen);
         QMessageBox::information(this, "Clone Successful", QString("Successfully cloned '%1' to:\n%2").arg(repoName, finalClonePath));
 
-        // Add the newly cloned repo to our managed list, preserving its origin info.
         if (m_repoManager->addManagedRepository(finalClonePath, repoName, false, m_myUsername, m_pendingCloneRequest.peerId))
         {
-            // <<< FIX: Look up the new repo by path to get its appId >>>
             ManagedRepositoryInfo newRepoInfo = m_repoManager->getRepositoryInfoByPath(finalClonePath);
             if (!newRepoInfo.appId.isEmpty())
             {
-                // Now call the function to open the project window with the correct ID
                 handleOpenRepoInProjectWindow(newRepoInfo.appId);
             }
         }

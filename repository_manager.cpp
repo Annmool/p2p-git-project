@@ -101,6 +101,18 @@ ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByPath(const QString &
     return ManagedRepositoryInfo();
 }
 
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByDisplayName(const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (repoInfo.displayName == displayName)
+        {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
 QList<ManagedRepositoryInfo> RepositoryManager::getAllManagedRepositories() const
 {
     return m_managedRepositories.values();
