@@ -7,24 +7,18 @@
 #include <QFileInfo>
 #include <QDebug>
 #include <QUuid>
-#include <algorithm> // <<< IMPROVEMENT: Include for std::remove_if
 
-// JSON Keys to match ManagedRepositoryInfo in the .h
-const QString JSON_KEY_APP_ID = "appId";
 const QString JSON_KEY_DISPLAY_NAME = "displayName";
 const QString JSON_KEY_LOCAL_PATH = "localPath";
 const QString JSON_KEY_IS_PUBLIC = "isPublic";
 const QString JSON_KEY_ADMIN_PEER_ID = "adminPeerId";
-const QString JSON_KEY_CLONED_FROM_PEER = "clonedFromPeerId";
-const QString JSON_KEY_CLONED_FROM_REPO = "clonedFromRepoName";
+const QString JSON_KEY_COLLABORATORS = "collaborators";
+const QString JSON_KEY_ORIGIN_PEER_ID = "originPeerId";
 
 RepositoryManager::RepositoryManager(const QString &storageFilePath, QObject *parent)
     : QObject(parent), m_storageFilePath(storageFilePath)
 {
-    if (!loadRepositoriesFromFile())
-    {
-        qWarning() << "RepositoryManager: Could not load repositories from" << storageFilePath << "- starting fresh.";
-    }
+    loadRepositoriesFromFile();
 }
 
 RepositoryManager::~RepositoryManager()
@@ -32,133 +26,86 @@ RepositoryManager::~RepositoryManager()
     saveRepositoriesToFile();
 }
 
-bool RepositoryManager::addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &clonedFromPeerId, const QString &clonedFromRepoName)
+bool RepositoryManager::addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId)
 {
-    QDir dir(localPath);
-    if (!dir.exists())
+    QString canonicalPath = QDir(localPath).canonicalPath();
+    for (const auto &repo : qAsConst(m_managedRepositories))
     {
-        qWarning() << "RepositoryManager: Path does not exist, cannot add:" << localPath;
-        return false;
-    }
-
-    // <<< FIX: Always use the canonical path for comparison to avoid duplicates.
-    const QString canonicalPath = dir.canonicalPath();
-
-    for (const auto &repoInfo : qAsConst(m_managedRepositoriesMap))
-    {
-        if (repoInfo.localPath == canonicalPath)
+        if (QDir(repo.localPath).canonicalPath() == canonicalPath)
         {
-            qWarning() << "RepositoryManager: Repository at path" << localPath << "is already managed with ID:" << repoInfo.appId;
+            qWarning() << "Repository at path" << localPath << "is already managed.";
             return false;
         }
     }
 
     ManagedRepositoryInfo newRepo;
     newRepo.appId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    newRepo.localPath = canonicalPath; // <<< FIX: Store the canonical path.
-    newRepo.displayName = displayName.isEmpty() ? QFileInfo(localPath).fileName() : displayName;
+    newRepo.localPath = canonicalPath;
+    newRepo.displayName = displayName;
     newRepo.isPublic = isPublic;
     newRepo.adminPeerId = adminPeerId;
-    newRepo.clonedFromPeerId = clonedFromPeerId;
-    newRepo.clonedFromRepoName = clonedFromRepoName;
+    newRepo.originPeerId = originPeerId;
 
-    m_managedRepositoriesList.append(newRepo);
-    m_managedRepositoriesMap.insert(newRepo.appId, newRepo);
-
-    qDebug() << "RepositoryManager: Added new repository:" << newRepo.displayName << "(" << newRepo.appId << ")";
+    m_managedRepositories.insert(newRepo.appId, newRepo);
     emit managedRepositoryListChanged();
-    saveRepositoriesToFile();
-    return true;
+    return saveRepositoriesToFile();
 }
 
 bool RepositoryManager::removeManagedRepository(const QString &appId)
 {
-    if (!m_managedRepositoriesMap.contains(appId))
+    if (m_managedRepositories.remove(appId) > 0)
     {
-        qWarning() << "RepositoryManager: Could not find repository with AppID to remove:" << appId;
-        return false;
+        emit managedRepositoryListChanged();
+        return saveRepositoriesToFile();
     }
-
-    ManagedRepositoryInfo removedRepo = m_managedRepositoriesMap.take(appId);
-
-    // <<< IMPROVEMENT: Use modern C++ `std::remove_if` for cleaner, safer removal from the list.
-    auto new_end = std::remove_if(m_managedRepositoriesList.begin(), m_managedRepositoriesList.end(),
-                                  [&](const ManagedRepositoryInfo &repo)
-                                  {
-                                      return repo.appId == appId;
-                                  });
-    m_managedRepositoriesList.erase(new_end, m_managedRepositoriesList.end());
-
-    qDebug() << "RepositoryManager: Removed repository" << removedRepo.displayName << "(" << appId << ")";
-    emit managedRepositoryListChanged();
-    saveRepositoriesToFile();
-    return true;
+    return false;
 }
 
 bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPublic)
 {
-    if (!m_managedRepositoriesMap.contains(appId))
-        return false;
-
-    // Update the primary data source (the map)
-    if (m_managedRepositoriesMap[appId].isPublic == isPublic)
-        return true; // No change needed
-    m_managedRepositoriesMap[appId].isPublic = isPublic;
-
-    // <<< IMPROVEMENT: Use a range-based for loop with a reference to safely update the list.
-    for (auto &repo : m_managedRepositoriesList)
+    if (m_managedRepositories.contains(appId))
     {
-        if (repo.appId == appId)
-        {
-            repo.isPublic = isPublic;
-            break;
-        }
+        m_managedRepositories[appId].isPublic = isPublic;
+        emit managedRepositoryListChanged();
+        return saveRepositoriesToFile();
     }
-
-    qDebug() << "RepositoryManager: Visibility for" << m_managedRepositoriesMap[appId].displayName
-             << "set to" << (isPublic ? "Public" : "Private");
-    emit managedRepositoryListChanged(); // Use this to signal UI and network layer
-    saveRepositoriesToFile();
-    return true;
+    return false;
 }
 
-bool RepositoryManager::updateRepositoryDisplayName(const QString &appId, const QString &newDisplayName)
+bool RepositoryManager::addCollaborator(const QString &appId, const QString &peerId)
 {
-    if (newDisplayName.isEmpty() || !m_managedRepositoriesMap.contains(appId))
-        return false;
-
-    if (m_managedRepositoriesMap[appId].displayName == newDisplayName)
-        return true; // No change needed
-    m_managedRepositoriesMap[appId].displayName = newDisplayName;
-
-    // <<< IMPROVEMENT: Use a range-based for loop with a reference to safely update the list.
-    for (auto &repo : m_managedRepositoriesList)
+    if (m_managedRepositories.contains(appId) && !m_managedRepositories[appId].collaborators.contains(peerId))
     {
-        if (repo.appId == appId)
-        {
-            repo.displayName = newDisplayName;
-            break;
-        }
+        m_managedRepositories[appId].collaborators.append(peerId);
+        emit managedRepositoryListChanged();
+        return saveRepositoriesToFile();
     }
-
-    qDebug() << "RepositoryManager: Display name for AppID" << appId << "updated to" << newDisplayName;
-    emit managedRepositoryListChanged();
-    saveRepositoriesToFile();
-    return true;
+    return false;
 }
 
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfo(const QString &appId) const
 {
-    return m_managedRepositoriesMap.value(appId, ManagedRepositoryInfo());
+    return m_managedRepositories.value(appId, ManagedRepositoryInfo());
 }
 
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByPath(const QString &localPath) const
 {
-    // <<< FIX: Use canonical path for lookup to ensure correctness.
     const QString canonicalPath = QDir(localPath).canonicalPath();
-    for (const auto &repoInfo : qAsConst(m_managedRepositoriesMap))
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
     {
-        if (repoInfo.localPath == canonicalPath)
+        if (QDir(repoInfo.localPath).canonicalPath() == canonicalPath)
+        {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByDisplayName(const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (repoInfo.displayName == displayName)
         {
             return repoInfo;
         }
@@ -168,105 +115,90 @@ ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByPath(const QString &
 
 QList<ManagedRepositoryInfo> RepositoryManager::getAllManagedRepositories() const
 {
-    return m_managedRepositoriesList;
+    return m_managedRepositories.values();
 }
 
-QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories() const
+QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(const QString &requestingPeer) const
 {
-    QList<ManagedRepositoryInfo> publicRepos;
-    for (const auto &repo : qAsConst(m_managedRepositoriesList))
+    QList<ManagedRepositoryInfo> repos;
+    for (const auto &repo : qAsConst(m_managedRepositories))
     {
-        if (repo.isPublic)
+        if (repo.isPublic || repo.collaborators.contains(requestingPeer))
         {
-            publicRepos.append(repo);
+            repos.append(repo);
         }
     }
-    return publicRepos;
+    return repos;
 }
 
-// --- Persistence ---
+QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const QString &myPeerId) const
+{
+    QList<ManagedRepositoryInfo> privateRepos;
+    for (const auto &repo : qAsConst(m_managedRepositories))
+    {
+        // Only return private repos that this user actually owns
+        if (!repo.isPublic && repo.adminPeerId == myPeerId)
+        {
+            privateRepos.append(repo);
+        }
+    }
+    return privateRepos;
+}
+
 bool RepositoryManager::loadRepositoriesFromFile()
 {
     QFile loadFile(m_storageFilePath);
-    if (!loadFile.exists())
-    {
-        return true;
-    }
     if (!loadFile.open(QIODevice::ReadOnly | QIODevice::Text))
-    {
-        qWarning() << "RepositoryManager: Couldn't open storage file for reading:" << loadFile.errorString();
         return false;
-    }
-
     QJsonDocument loadDoc = QJsonDocument::fromJson(loadFile.readAll());
-    loadFile.close();
-
-    if (!loadDoc.isArray())
-    {
-        qWarning() << "RepositoryManager: JSON root is not an array in:" << m_storageFilePath;
+    if (!loadDoc.isObject())
         return false;
-    }
 
-    m_managedRepositoriesList.clear();
-    m_managedRepositoriesMap.clear();
-    for (const QJsonValue &val : loadDoc.array())
+    QJsonObject json = loadDoc.object();
+    m_managedRepositories.clear();
+    for (const QString &key : json.keys())
     {
-        QJsonObject repoObject = val.toObject();
+        QJsonObject repoObject = json[key].toObject();
         ManagedRepositoryInfo repo;
-        repo.appId = repoObject[JSON_KEY_APP_ID].toString();
-        repo.localPath = repoObject[JSON_KEY_LOCAL_PATH].toString();
+        repo.appId = key;
         repo.displayName = repoObject[JSON_KEY_DISPLAY_NAME].toString();
-        repo.isPublic = repoObject[JSON_KEY_IS_PUBLIC].toBool();
+        repo.localPath = repoObject[JSON_KEY_LOCAL_PATH].toString();
+        repo.isPublic = repoObject[JSON_KEY_IS_PUBLIC].toBool(false);
         repo.adminPeerId = repoObject[JSON_KEY_ADMIN_PEER_ID].toString();
-        repo.clonedFromPeerId = repoObject[JSON_KEY_CLONED_FROM_PEER].toString();
-        repo.clonedFromRepoName = repoObject[JSON_KEY_CLONED_FROM_REPO].toString();
-
-        // <<< IMPROVEMENT: More lenient check for backwards compatibility
-        if (!repo.appId.isEmpty() && !repo.localPath.isEmpty())
+        repo.originPeerId = repoObject[JSON_KEY_ORIGIN_PEER_ID].toString();
+        QJsonArray collaboratorsArray = repoObject[JSON_KEY_COLLABORATORS].toArray();
+        for (const QJsonValue &v : collaboratorsArray)
         {
-            m_managedRepositoriesList.append(repo);
-            m_managedRepositoriesMap.insert(repo.appId, repo);
+            repo.collaborators.append(v.toString());
         }
-        else
-        {
-            qWarning() << "RepositoryManager: Skipped loading a repo due to missing AppID or LocalPath.";
-        }
+        m_managedRepositories.insert(repo.appId, repo);
     }
-    qInfo() << "RepositoryManager: Loaded" << m_managedRepositoriesList.size() << "repositories from" << m_storageFilePath;
+    emit managedRepositoryListChanged();
     return true;
 }
 
 bool RepositoryManager::saveRepositoriesToFile() const
 {
+    QDir dir = QFileInfo(m_storageFilePath).dir();
+    if (!dir.exists())
+        dir.mkpath(".");
+
     QFile saveFile(m_storageFilePath);
-    QDir dir = QFileInfo(saveFile).dir();
-    if (!dir.exists() && !dir.mkpath("."))
-    {
-        qWarning() << "RepositoryManager: Could not create directory for storage file:" << dir.path();
-        return false;
-    }
-
     if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
-    {
-        qWarning() << "RepositoryManager: Couldn't open storage file for writing:" << saveFile.errorString();
         return false;
-    }
 
-    QJsonArray reposArray;
-    for (const auto &repo : qAsConst(m_managedRepositoriesList))
+    QJsonObject json;
+    for (const auto &repo : qAsConst(m_managedRepositories))
     {
         QJsonObject repoObject;
-        repoObject[JSON_KEY_APP_ID] = repo.appId;
-        repoObject[JSON_KEY_LOCAL_PATH] = repo.localPath;
         repoObject[JSON_KEY_DISPLAY_NAME] = repo.displayName;
+        repoObject[JSON_KEY_LOCAL_PATH] = repo.localPath;
         repoObject[JSON_KEY_IS_PUBLIC] = repo.isPublic;
         repoObject[JSON_KEY_ADMIN_PEER_ID] = repo.adminPeerId;
-        repoObject[JSON_KEY_CLONED_FROM_PEER] = repo.clonedFromPeerId;
-        repoObject[JSON_KEY_CLONED_FROM_REPO] = repo.clonedFromRepoName;
-        reposArray.append(repoObject);
+        repoObject[JSON_KEY_ORIGIN_PEER_ID] = repo.originPeerId;
+        repoObject[JSON_KEY_COLLABORATORS] = QJsonArray::fromStringList(repo.collaborators);
+        json[repo.appId] = repoObject;
     }
-    saveFile.write(QJsonDocument(reposArray).toJson(QJsonDocument::Indented));
-    saveFile.close();
-    qDebug() << "RepositoryManager: Saved" << m_managedRepositoriesList.size() << "repositories to" << m_storageFilePath;
+    saveFile.write(QJsonDocument(json).toJson(QJsonDocument::Indented));
     return true;
 }

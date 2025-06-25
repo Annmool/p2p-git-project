@@ -10,7 +10,9 @@
 #include <QTimer>
 #include <QMap>
 #include <QMetaType>
+#include <QVariantMap>
 #include <QFile>
+#include <QSet>
 #include "identity_manager.h"
 
 class RepositoryManager;
@@ -38,19 +40,24 @@ public:
     void stopTcpServer();
     quint16 getTcpServerPort() const;
     bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername);
+    void connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath);
+    void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
+    void sendEncryptedMessage(QTcpSocket *socket, const QString &messageType, const QVariantMap &payload);
     void disconnectAllTcpPeers();
     bool hasActiveTcpConnections() const;
     bool startUdpDiscovery(quint16 udpPort = 45454);
     void stopUdpDiscovery();
     void sendDiscoveryBroadcast();
-    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &message);
     void broadcastTcpMessage(const QString &message);
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
-    void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
+    QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
+    QList<QString> getConnectedPeerIds() const;
+    bool isConnectionPending(QTcpSocket *socket) const;
+    void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
@@ -65,6 +72,8 @@ signals:
     void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
     void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
+    void repoBundleSent(const QString &repoName, const QString &recipientUsername);
+    void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
 
 private slots:
     void onNewTcpConnection();
@@ -77,7 +86,6 @@ private slots:
     void onPeerCleanupTimerTimeout();
 
 private:
-    // <<< FIX: The complete struct with the state enum is defined here.
     struct IncomingFileTransfer
     {
         enum TransferState
@@ -93,6 +101,8 @@ private:
         qint64 bytesReceived = 0;
     };
     QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
+    QMap<QTcpSocket *, QByteArray> m_socketBuffers;
+    QSet<QTcpSocket *> m_handshakeSent;
 
     QTcpServer *m_tcpServer;
     QList<QTcpSocket *> m_allTcpSockets;
@@ -101,7 +111,7 @@ private:
     QString m_myUsername;
     IdentityManager *m_identityManager;
     RepositoryManager *m_repoManager_ptr;
-    QMap<QString, QString> m_peerPublicKeys;
+    QMap<QString, QByteArray> m_peerPublicKeys;
     QUdpSocket *m_udpSocket;
     quint16 m_udpDiscoveryPort;
     QTimer *m_broadcastTimer;
@@ -109,9 +119,12 @@ private:
     QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
 
     QString getPeerDisplayString(QTcpSocket *socket);
-    void processIncomingTcpData(QTcpSocket *socket, const QByteArray &data);
+    void processIncomingTcpData(QTcpSocket *socket);
     void sendIdentityOverTcp(QTcpSocket *socket);
     void setupAcceptedSocket(QTcpSocket *socket);
+    QString findUsernameForAddress(const QHostAddress &address);
+    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &message);
+    void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
 };
 
 #endif // NETWORK_MANAGER_H

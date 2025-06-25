@@ -3,23 +3,27 @@
 
 #include <string>
 #include <vector>
-#include <sodium.h> 
-#include <QString> 
+#include <sodium.h>
+#include <QString>
+#include <QByteArray>
 
 const size_t ID_PUBLIC_KEY_BYTES = crypto_sign_PUBLICKEYBYTES;
 const size_t ID_SECRET_KEY_BYTES = crypto_sign_SECRETKEYBYTES;
 
-class IdentityManager {
+class IdentityManager
+{
 public:
-    explicit IdentityManager(const QString& peerNameForPath = QString("DefaultPeerIdentity"), const std::string& appName = "P2PGitClient");
+    explicit IdentityManager(const QString &peerNameForPath = QString("DefaultPeerIdentity"), const std::string &appName = "P2PGitClient");
     ~IdentityManager();
 
     bool initializeKeys();
     std::string getMyPublicKeyHex() const;
+    QByteArray getMyPublicKeyBytes() const;
+    QByteArray getMyPrivateKeyBytes() const;
     bool areKeysInitialized() const;
 
-    static std::string bytesToHex(const unsigned char* bytes, size_t size);
-    static std::vector<unsigned char> hexToBytes(const std::string& hex);
+    static std::string bytesToHex(const unsigned char *bytes, size_t size);
+    static std::vector<unsigned char> hexToBytes(const std::string &hex);
 
 private:
     bool generateKeyPair();

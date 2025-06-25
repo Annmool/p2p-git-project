@@ -2,45 +2,21 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-// All required Qt includes
-#include <QPushButton>
-#include <QLineEdit>
-#include <QTextEdit>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QComboBox>
-#include <QSplitter>
-#include <QListWidget>
-#include <QListWidgetItem>
-#include <QFrame>
-#include <QInputDialog>
-#include <QStandardPaths>
-#include <QDir>
-#include <QTcpSocket>
-#include <QHostAddress>
-#include <QHostInfo>
-#include <QCryptographicHash>
-#include <QRandomGenerator>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
-#include <QProcess>
-#include <QCloseEvent> // <<< FIX: Added the full include for QCloseEvent
-
-// Project-Specific Includes
-#include "git_backend.h"
-#include "network_manager.h"
-
-// Forward-declare classes to avoid MOC redefinition errors
-class IdentityManager;
-class RepositoryManager;
+#include <QCloseEvent>
+#include <QList>
+#include "network_manager.h" // For DiscoveredPeerInfo struct
 
 QT_BEGIN_NAMESPACE
-namespace Ui
-{
-    class MainWindow;
-}
+class QListWidgetItem;
+class QSplitter;
 QT_END_NAMESPACE
+
+class NetworkPanel;
+class RepoManagementPanel;
+class GitBackend;
+class IdentityManager;
+class RepositoryManager;
+class ProjectWindow;
 
 class MainWindow : public QMainWindow
 {
@@ -54,40 +30,28 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private slots:
-    void onInitRepoClicked();
-    void onOpenRepoClicked();
-    void onRefreshLogClicked();
-    void onRefreshBranchesClicked();
-    void onCheckoutBranchClicked();
-    void onAddManagedRepoClicked();
-    void onManagedRepoDoubleClicked(QListWidgetItem *item);
-    void onToggleDiscoveryAndTcpServerClicked();
-    void onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current, QTreeWidgetItem *previous);
-    void onCloneSelectedRepoClicked();
-    void onSendMessageClicked();
-    void handleTcpServerStatusChanged(bool listening, quint16 port, const QString &error);
-    void handleIncomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
-    void handleNewTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex);
-    void handleTcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername);
-    void handleTcpMessageReceived(QTcpSocket *peerSocket, const QString &peerUsername, const QString &message);
-    void handleTcpConnectionStatusChanged(const QString &peerUsername, const QString &peerPublicKeyHex, bool connected, const QString &error);
-    void handleLanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
-    void handleLanPeerLost(const QString &peerUsername);
+    void handleAddManagedRepo(const QString &preselectedPath = "");
+    void handleModifyRepoAccess(const QString &appId);
+    void handleDeleteRepo(const QString &appId);
+    void handleOpenRepoInProjectWindow(const QString &appId);
+
+    void handleToggleDiscovery();
+    void handleConnectToPeer(const QString &peerId);
+    void handleCloneRepo(const QString &peerId, const QString &repoName);
+    void handleAddCollaborator(const QString &peerId);
+    void handleSendMessage(const QString &message);
+
+    void handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username);
+    void handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
-    void handleRepositoryListChanged();
+
+    void updateUiFromBackend();
 
 private:
     void setupUi();
-    void setupRepoManagementUi(QSplitter *parentSplitter);
-    void setupNetworkUi(QSplitter *parentSplitter);
-    void updateRepositoryStatus();
-    void loadCommitLog();
-    void loadBranchList();
-    void loadCommitLogForBranch(const std::string &branchName);
-    void updateNetworkUiState();
+    void connectSignals();
 
-    // <<< FIX: The complete and correct struct definition
     struct PendingCloneRequest
     {
         QString peerId;
@@ -103,25 +67,16 @@ private:
     };
     PendingCloneRequest m_pendingCloneRequest;
 
-    std::string m_currentlyDisplayedLogBranch;
     QString m_myUsername;
 
-    // UI Elements
-    QLineEdit *repoPathInput, *messageInput;
-    QPushButton *initRepoButton, *openRepoButton, *refreshLogButton, *refreshBranchesButton, *checkoutBranchButton;
-    QPushButton *addManagedRepoButton, *toggleDiscoveryButton, *cloneSelectedRepoButton, *sendMessageButton;
-    QLabel *currentRepoLabel, *currentBranchLabel, *myPeerInfoLabel, *tcpServerStatusLabel;
-    QTextEdit *commitLogDisplay, *messageLog, *networkLogDisplay;
-    QComboBox *branchComboBox;
-    QListWidget *managedReposListWidget, *connectedTcpPeersList;
-    QTreeWidget *discoveredPeersTreeWidget;
-    QFrame *repoManagementFrame, *networkFrame;
+    GitBackend *m_gitBackend;
+    IdentityManager *m_identityManager;
+    RepositoryManager *m_repoManager;
+    NetworkManager *m_networkManager;
 
-    // Backend/Manager Instances
-    GitBackend gitBackend;
-    IdentityManager *m_identityManager_ptr;
-    NetworkManager *m_networkManager_ptr;
-    RepositoryManager *m_repoManager_ptr;
+    NetworkPanel *m_networkPanel;
+    RepoManagementPanel *m_repoManagementPanel;
+    QList<ProjectWindow *> m_projectWindows;
 };
 
 #endif // MAINWINDOW_H

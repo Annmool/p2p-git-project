@@ -8,7 +8,6 @@
 #include <QUuid>
 #include <QMetaType>
 
-// This struct MUST contain the new fields.
 struct ManagedRepositoryInfo
 {
     QString appId;
@@ -16,46 +15,39 @@ struct ManagedRepositoryInfo
     QString localPath;
     bool isPublic;
     QString adminPeerId;
-    QString clonedFromPeerId;   // ID of the peer this was cloned from
-    QString clonedFromRepoName; // Original display name on the source peer
-
+    QStringList collaborators;
+    QString originPeerId;
     ManagedRepositoryInfo() : isPublic(false) {}
-
-    ManagedRepositoryInfo(QString id, QString name, QString path, bool pub, QString adminId)
-        : appId(id), displayName(name), localPath(path), isPublic(pub), adminPeerId(adminId) {}
 };
 Q_DECLARE_METATYPE(ManagedRepositoryInfo)
 
 class RepositoryManager : public QObject
 {
     Q_OBJECT
-
 public:
     explicit RepositoryManager(const QString &storageFilePath, QObject *parent = nullptr);
     ~RepositoryManager();
 
-    bool addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId,
-                              const QString &clonedFromPeerId = "", const QString &clonedFromRepoName = "");
-
+    bool addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId = "");
     bool removeManagedRepository(const QString &appId);
     bool setRepositoryVisibility(const QString &appId, bool isPublic);
-    bool updateRepositoryDisplayName(const QString &appId, const QString &newDisplayName);
-    Q_INVOKABLE ManagedRepositoryInfo getRepositoryInfo(const QString &appId) const;
-    Q_INVOKABLE ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
-    Q_INVOKABLE QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
-    QList<ManagedRepositoryInfo> getMyPubliclySharedRepositories() const;
+    bool addCollaborator(const QString &appId, const QString &peerId);
+
+    ManagedRepositoryInfo getRepositoryInfo(const QString &appId) const;
+    ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
+    ManagedRepositoryInfo getRepositoryInfoByDisplayName(const QString &displayName) const;
+    QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
+    QList<ManagedRepositoryInfo> getMyPubliclySharedRepositories(const QString &requestingPeer) const;
+    QList<ManagedRepositoryInfo> getMyPrivateRepositories(const QString &myPeerId) const;
 
 signals:
     void managedRepositoryListChanged();
-    void repositoryMetadataUpdated(const QString &appId);
 
 private:
     bool loadRepositoriesFromFile();
     bool saveRepositoriesToFile() const;
 
     QString m_storageFilePath;
-    QList<ManagedRepositoryInfo> m_managedRepositoriesList;
-    QMap<QString, ManagedRepositoryInfo> m_managedRepositoriesMap;
+    QMap<QString, ManagedRepositoryInfo> m_managedRepositories;
 };
-
 #endif // REPOSITORY_MANAGER_H
