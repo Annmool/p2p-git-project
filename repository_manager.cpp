@@ -123,6 +123,7 @@ QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(
     QList<ManagedRepositoryInfo> repos;
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
+        // A peer can discover a repo if it's public, or if they are a direct collaborator on it
         if (repo.isPublic || repo.collaborators.contains(requestingPeer))
         {
             repos.append(repo);
@@ -131,6 +132,7 @@ QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(
     return repos;
 }
 
+// FIX: Renamed function to match header declaration
 QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const QString &myPeerId) const
 {
     QList<ManagedRepositoryInfo> privateRepos;
@@ -144,6 +146,20 @@ QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const Q
     }
     return privateRepos;
 }
+
+QList<ManagedRepositoryInfo> RepositoryManager::getRepositoriesIAmMemberOf(const QString &myPeerId) const
+{
+    QList<ManagedRepositoryInfo> memberRepos;
+    for (const auto &repo : qAsConst(m_managedRepositories))
+    {
+        if (repo.adminPeerId == myPeerId || repo.collaborators.contains(myPeerId))
+        {
+            memberRepos.append(repo);
+        }
+    }
+    return memberRepos;
+}
+
 
 bool RepositoryManager::loadRepositoriesFromFile()
 {
@@ -201,4 +217,15 @@ bool RepositoryManager::saveRepositoriesToFile() const
     }
     saveFile.write(QJsonDocument(json).toJson(QJsonDocument::Indented));
     return true;
+}
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOrigin(const QString &originPeerId, const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (repoInfo.originPeerId == originPeerId && repoInfo.displayName == displayName)
+        {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
 }

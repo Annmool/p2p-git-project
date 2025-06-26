@@ -1,6 +1,7 @@
 #include "network_panel.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTreeWidget>
@@ -12,6 +13,8 @@
 #include <QAction>
 #include <QHeaderView>
 #include <QCryptographicHash>
+#include <QComboBox>
+#include <QSplitter>
 
 NetworkPanel::NetworkPanel(QWidget *parent) : QWidget(parent)
 {
@@ -24,7 +27,7 @@ NetworkPanel::NetworkPanel(QWidget *parent) : QWidget(parent)
     connect(cloneRepoButton, &QPushButton::clicked, this, &NetworkPanel::onCloneClicked);
     connect(sendMessageButton, &QPushButton::clicked, this, &NetworkPanel::onSendMessageClicked);
     connect(discoveredPeersTreeWidget, &QTreeWidget::currentItemChanged, this, &NetworkPanel::onDiscoveredPeerOrRepoSelected);
-    connect(connectedTcpPeersList, &QListWidget::customContextMenuRequested, this, &NetworkPanel::showContextMenu);
+    connect(discoveredPeersTreeWidget, &QTreeWidget::customContextMenuRequested, this, &NetworkPanel::showContextMenu);
 }
 
 void NetworkPanel::setNetworkManager(NetworkManager *manager)
@@ -45,13 +48,23 @@ void NetworkPanel::logMessage(const QString &message, const QColor &color)
     networkLogDisplay->append(QString("<font color='%1'>%2</font>").arg(color.name(), message.toHtmlEscaped()));
 }
 
-void NetworkPanel::logChatMessage(const QString &peerId, const QString &message)
+void NetworkPanel::logBroadcastMessage(const QString &peerId, const QString &message)
 {
     QString formattedMessage = QString("<b>%1:</b> %2")
                                    .arg(peerId == m_myUsername ? "Me" : peerId.toHtmlEscaped())
                                    .arg(message.toHtmlEscaped());
     networkLogDisplay->append(formattedMessage);
 }
+
+void NetworkPanel::logGroupChatMessage(const QString &repoName, const QString &peerId, const QString &message)
+{
+    QString formattedMessage = QString("<font color='blue'>[%1]</font> <b>%2:</b> %3")
+                                   .arg(repoName.toHtmlEscaped())
+                                   .arg(peerId == m_myUsername ? "Me" : peerId.toHtmlEscaped())
+                                   .arg(message.toHtmlEscaped());
+    networkLogDisplay->append(formattedMessage);
+}
+
 
 void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &discoveredPeers, const QList<QString> &connectedPeerIds)
 {
@@ -90,16 +103,6 @@ void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &disco
     }
 }
 
-void NetworkPanel::updateConnectedPeersList(const QList<QString> &connectedPeerIds)
-{
-    connectedTcpPeersList->clear();
-    for (const QString &peerId : connectedPeerIds)
-    {
-        QListWidgetItem *item = new QListWidgetItem(peerId, connectedTcpPeersList);
-        item->setData(Qt::UserRole, peerId);
-    }
-}
-
 void NetworkPanel::updateServerStatus(bool listening, quint16 port, const QString &error)
 {
     if (listening)
@@ -107,7 +110,7 @@ void NetworkPanel::updateServerStatus(bool listening, quint16 port, const QStrin
         tcpServerStatusLabel->setText(QString("TCP Server: <font color='lime'><b>Listening on port %1</b></font>").arg(port));
         toggleDiscoveryButton->setText("Stop Discovery & TCP Server");
         if (!m_myUsername.isEmpty())
-        { // Ensure myUsername is set before using it
+        {
             myPeerInfoLabel->setText(QString("<b>My Peer ID:</b> %1<br><b>PubKey (prefix):</b> %2...<br><b>TCP Port:</b> %3")
                                          .arg(m_myUsername.toHtmlEscaped())
                                          .arg(myPeerInfoLabel->text().split("...").first().split(":").last().trimmed())
@@ -127,51 +130,46 @@ void NetworkPanel::updateServerStatus(bool listening, quint16 port, const QStrin
 
 void NetworkPanel::setupUi()
 {
-    QVBoxLayout *networkVLayout = new QVBoxLayout(this);
-    networkVLayout->addWidget(new QLabel("<b>P2P Network</b>", this));
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->addWidget(new QLabel("<b>P2P Network</b>", this));
 
     myPeerInfoLabel = new QLabel("<b>My Peer ID:</b><br><b>PubKey (prefix):</b>", this);
     myPeerInfoLabel->setWordWrap(true);
-    networkVLayout->addWidget(myPeerInfoLabel);
+    mainLayout->addWidget(myPeerInfoLabel);
 
     toggleDiscoveryButton = new QPushButton("Start Discovery & TCP Server", this);
-    networkVLayout->addWidget(toggleDiscoveryButton);
+    mainLayout->addWidget(toggleDiscoveryButton);
     tcpServerStatusLabel = new QLabel("TCP Server: Inactive", this);
-    networkVLayout->addWidget(tcpServerStatusLabel);
+    mainLayout->addWidget(tcpServerStatusLabel);
 
-    networkVLayout->addWidget(new QLabel("<b>Discovered Peers & Repos on LAN:</b>", this));
+    mainLayout->addWidget(new QLabel("<b>Discovered Peers & Repos on LAN:</b>", this));
     discoveredPeersTreeWidget = new QTreeWidget(this);
+    discoveredPeersTreeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     discoveredPeersTreeWidget->setHeaderLabels(QStringList() << "Peer / Repository" << "Details");
     discoveredPeersTreeWidget->setColumnCount(2);
     discoveredPeersTreeWidget->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    networkVLayout->addWidget(discoveredPeersTreeWidget, 1);
+    mainLayout->addWidget(discoveredPeersTreeWidget, 1);
 
     QHBoxLayout *actionButtonLayout = new QHBoxLayout();
     connectToPeerButton = new QPushButton("Connect to Peer", this);
     cloneRepoButton = new QPushButton("Clone Repository", this);
     actionButtonLayout->addWidget(connectToPeerButton);
     actionButtonLayout->addWidget(cloneRepoButton);
-    networkVLayout->addLayout(actionButtonLayout);
+    mainLayout->addLayout(actionButtonLayout);
 
-    networkVLayout->addWidget(new QLabel("<b>Established TCP Connections:</b>", this));
-    connectedTcpPeersList = new QListWidget(this);
-    connectedTcpPeersList->setContextMenuPolicy(Qt::CustomContextMenu);
-    connectedTcpPeersList->setMaximumHeight(80);
-    networkVLayout->addWidget(connectedTcpPeersList);
-
-    QHBoxLayout *messageSendLayout = new QHBoxLayout();
-    messageInput = new QLineEdit(this);
-    messageInput->setPlaceholderText("Enter message to broadcast...");
-    messageSendLayout->addWidget(messageInput, 1);
-    sendMessageButton = new QPushButton("Send", this);
-    messageSendLayout->addWidget(sendMessageButton);
-    networkVLayout->addLayout(messageSendLayout);
-
-    networkVLayout->addWidget(new QLabel("<b>Network Log:</b>", this));
+    mainLayout->addWidget(new QLabel("<b>Network Log / Broadcasts:</b>", this));
     networkLogDisplay = new QTextEdit(this);
     networkLogDisplay->setReadOnly(true);
     networkLogDisplay->setFontFamily("monospace");
-    networkVLayout->addWidget(networkLogDisplay, 1);
+    mainLayout->addWidget(networkLogDisplay, 1);
+    
+    QHBoxLayout *messageSendLayout = new QHBoxLayout();
+    messageInput = new QLineEdit(this);
+    messageInput->setPlaceholderText("Enter message to broadcast to all connected peers...");
+    messageSendLayout->addWidget(messageInput, 1);
+    sendMessageButton = new QPushButton("Broadcast", this);
+    messageSendLayout->addWidget(sendMessageButton);
+    mainLayout->addLayout(messageSendLayout);
 }
 
 void NetworkPanel::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current)
@@ -218,27 +216,30 @@ void NetworkPanel::onCloneClicked()
 void NetworkPanel::onSendMessageClicked()
 {
     QString message = messageInput->text().trimmed();
-    if (!message.isEmpty())
-    {
-        emit sendMessageRequested(message);
-        logChatMessage(m_myUsername, message);
-        messageInput->clear();
-    }
+    if (message.isEmpty()) return;
+    emit sendBroadcastMessageRequested(message);
+    messageInput->clear();
 }
 
 void NetworkPanel::showContextMenu(const QPoint &pos)
 {
-    QListWidgetItem *item = connectedTcpPeersList->itemAt(pos);
-    if (!item)
+    QTreeWidgetItem *item = discoveredPeersTreeWidget->itemAt(pos);
+    if (!item || item->parent())
         return;
 
+    QString peerId = item->text(0);
+    if (!m_networkManager) return;
+
+    bool isConnected = m_networkManager->getSocketForPeer(peerId) != nullptr;
+    
     QMenu contextMenu(this);
     QAction *addCollabAction = contextMenu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), "Add as Collaborator...");
-    QAction *selectedAction = contextMenu.exec(connectedTcpPeersList->mapToGlobal(pos));
+    addCollabAction->setEnabled(isConnected);
+    
+    QAction *selectedAction = contextMenu.exec(discoveredPeersTreeWidget->mapToGlobal(pos));
 
     if (selectedAction == addCollabAction)
     {
-        QString peerId = item->data(Qt::UserRole).toString();
         emit addCollaboratorRequested(peerId);
     }
 }

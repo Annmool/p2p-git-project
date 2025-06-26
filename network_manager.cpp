@@ -44,16 +44,240 @@ NetworkManager::~NetworkManager()
     qDeleteAll(m_incomingTransfers);
 }
 
+void NetworkManager::onNewTcpConnection()
+{
+    while (m_tcpServer->hasPendingConnections())
+    {
+        QTcpSocket *socket = m_tcpServer->nextPendingConnection();
+        if (socket)
+        {
+            qDebug() << "Incoming connection from" << socket->peerAddress().toString();
+            connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
+            connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
+            connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
+            if (!m_allTcpSockets.contains(socket)) m_allTcpSockets.append(socket);
+
+            m_pendingConnections.insert(socket, new QTimer(socket));
+            m_pendingConnections[socket]->setSingleShot(true);
+            connect(m_pendingConnections[socket], &QTimer::timeout, this, [this, socket](){ rejectPendingTcpConnection(socket); });
+            m_pendingConnections[socket]->start(PENDING_CONNECTION_TIMEOUT_MS);
+
+            QString discoveredUsername = findUsernameForAddress(socket->peerAddress());
+            emit incomingTcpConnectionRequest(socket, socket->peerAddress(), socket->peerPort(), discoveredUsername);
+        }
+    }
+}
+
+void NetworkManager::onTcpSocketReadyRead()
+{
+    QTcpSocket *socket = qobject_cast<QTcpSocket *>(sender());
+    if (!socket) return;
+
+    m_socketBuffers[socket].append(socket->readAll());
+
+    if (m_pendingConnections.contains(socket)) {
+        qDebug() << "Data arrived on a pending connection. Buffering only.";
+        return;
+    }
+    
+    processIncomingTcpData(socket);
+}
+
+void NetworkManager::acceptPendingTcpConnection(QTcpSocket *pendingSocket)
+{
+    if (m_pendingConnections.contains(pendingSocket))
+    {
+        qDebug() << "User accepted connection from" << pendingSocket->peerAddress().toString();
+        
+        QTimer *timer = m_pendingConnections.take(pendingSocket);
+        if (timer) timer->deleteLater();
+
+        sendIdentityOverTcp(pendingSocket);
+
+        if (m_socketBuffers.contains(pendingSocket) && !m_socketBuffers[pendingSocket].isEmpty()) {
+            qDebug() << "Processing buffered data for newly accepted connection.";
+            processIncomingTcpData(pendingSocket);
+        }
+    }
+}
+
+void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVariantMap &payload)
+{
+    QString messageType = payload.value("__messageType").toString();
+    if (messageType.isEmpty()) return;
+
+    qDebug() << "Handling encrypted payload of type" << messageType << "from" << peerId;
+
+    if (messageType == "SHARE_PRIVATE_REPO") {
+        emit secureMessageReceived(peerId, messageType, payload);
+    } else if (messageType == "COLLABORATOR_ADDED") {
+        QString appId = payload.value("appId").toString();
+        QString repoName = payload.value("repoName").toString();
+        QString ownerId = payload.value("ownerId").toString();
+        
+        if (!appId.isEmpty() && m_repoManager_ptr) {
+            ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfoByOrigin(ownerId, repoName);
+
+            if (!repoInfo.appId.isEmpty()) {
+                m_repoManager_ptr->addCollaborator(repoInfo.appId, m_myUsername);
+                qDebug() << "I (" << m_myUsername << ") have been confirmed as a collaborator on" << repoName;
+            } else {
+                qWarning() << "Received COLLABORATOR_ADDED message for repo" << repoName << "but I don't have a local copy.";
+            }
+        }
+    }
+}
+
+void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
+{
+    QByteArray &buffer = m_socketBuffers[socket];
+    QDataStream in(buffer);
+    in.setVersion(QDataStream::Qt_5_15);
+
+    while (true)
+    {
+        if (m_incomingTransfers.contains(socket))
+        {
+            IncomingFileTransfer *transfer = m_incomingTransfers.value(socket);
+            qint64 bytesToWrite = qMin((qint64)buffer.size(), transfer->totalSize - transfer->bytesReceived);
+            if (bytesToWrite > 0)
+            {
+                transfer->file.write(buffer.constData(), bytesToWrite);
+                buffer.remove(0, static_cast<int>(bytesToWrite));
+                transfer->bytesReceived += bytesToWrite;
+                emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
+            }
+            if (transfer->bytesReceived < transfer->totalSize) return;
+        }
+
+        in.startTransaction();
+        QString messageType;
+        in >> messageType;
+        
+        if (messageType == "IDENTITY_HANDSHAKE_V2")
+        {
+            QString peerUsername, peerKeyHex;
+            in >> peerUsername >> peerKeyHex;
+            if (!in.commitTransaction()) return;
+            
+            QString expectedPeerId = m_socketToPeerUsernameMap.value(socket, "");
+            if(expectedPeerId.isEmpty() || expectedPeerId == peerUsername) {
+                m_socketToPeerUsernameMap.insert(socket, peerUsername);
+                m_peerPublicKeys.insert(peerUsername, QByteArray::fromHex(peerKeyHex.toUtf8()));
+                if (!m_handshakeSent.contains(socket)) sendIdentityOverTcp(socket);
+                emit newTcpPeerConnected(socket, peerUsername, peerKeyHex);
+            } else {
+                 qWarning() << "Identity mismatch! Expected" << expectedPeerId << "but got" << peerUsername;
+                 socket->disconnectFromHost();
+            }
+        }
+        else if (messageType == "REQUEST_REPO_BUNDLE") {
+             QString requestingPeer, repoName, temp;
+             in >> requestingPeer >> repoName >> temp;
+             if (!in.commitTransaction()) return;
+             m_socketToPeerUsernameMap.insert(socket, "Transfer:" + repoName);
+             handleRepoRequest(socket, requestingPeer, repoName);
+        }
+        else if (messageType == "SEND_REPO_BUNDLE_START")
+        {
+            QString repoName;
+            qint64 totalSize;
+            in >> repoName >> totalSize;
+            if (!in.commitTransaction()) return;
+            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
+            auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
+            if (transfer->file.open(QIODevice::WriteOnly)) {
+                m_incomingTransfers.insert(socket, transfer);
+            } else {
+                 qWarning() << "Could not open temp file for bundle transfer:" << tempPath;
+                 delete transfer;
+            }
+        }
+        else if (messageType == "SEND_REPO_BUNDLE_END")
+        {
+            QString repoName;
+            in >> repoName;
+            if (!in.commitTransaction()) return;
+            if (m_incomingTransfers.contains(socket))
+            {
+                IncomingFileTransfer *transfer = m_incomingTransfers.take(socket);
+                transfer->file.close();
+                bool success = (transfer->bytesReceived == transfer->totalSize);
+                emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Transfer complete." : "Size mismatch.");
+                delete transfer;
+                if (socket->property("is_transfer_socket").toBool()) {
+                    socket->disconnectFromHost();
+                }
+            }
+        }
+        else if (messageType == "BROADCAST_MESSAGE")
+        {
+            QString message;
+            in >> message;
+            if(!in.commitTransaction()) return;
+            QString peerUsername = m_socketToPeerUsernameMap.value(socket);
+            if (!peerUsername.isEmpty()) emit broadcastMessageReceived(socket, peerUsername, message);
+        }
+        else if (messageType == "GROUP_CHAT_MESSAGE")
+        {
+            QString repoAppId, message;
+            in >> repoAppId >> message;
+            if(!in.commitTransaction()) return;
+            QString peerUsername = m_socketToPeerUsernameMap.value(socket);
+            if(!peerUsername.isEmpty()) emit groupMessageReceived(peerUsername, repoAppId, message);
+        }
+        else if (messageType == "ENCRYPTED_PAYLOAD")
+        {
+            QByteArray nonce, ciphertext;
+            in >> nonce >> ciphertext;
+            if(!in.commitTransaction()) return;
+
+            QString peerId = m_socketToPeerUsernameMap.value(socket);
+            if (peerId.isEmpty() || !m_peerPublicKeys.contains(peerId)) {
+                qWarning() << "Received encrypted payload from unknown peer or peer with no public key.";
+                continue;
+            }
+
+            QByteArray mySecretKey = m_identityManager->getMyPrivateKeyBytes();
+            QByteArray peerPubKey = m_peerPublicKeys.value(peerId);
+
+            QByteArray decryptedMessage(ciphertext.size() - crypto_box_MACBYTES, 0);
+
+            if (crypto_box_open_easy(
+                    reinterpret_cast<unsigned char*>(decryptedMessage.data()),
+                    reinterpret_cast<const unsigned char*>(ciphertext.constData()),
+                    ciphertext.size(),
+                    reinterpret_cast<const unsigned char*>(nonce.constData()),
+                    reinterpret_cast<const unsigned char*>(peerPubKey.constData()),
+                    reinterpret_cast<const unsigned char*>(mySecretKey.constData())
+                ) != 0)
+            {
+                qWarning() << "Failed to decrypt message from" << peerId;
+                continue;
+            }
+
+            QJsonDocument doc = QJsonDocument::fromJson(decryptedMessage);
+            if (doc.isObject()) {
+                handleEncryptedPayload(peerId, doc.object().toVariantMap());
+            }
+        }
+        else {
+            qWarning() << "Unknown or unexpected message type received:" << messageType << "from" << getPeerDisplayString(socket);
+            in.rollbackTransaction();
+            return;
+        }
+
+        buffer.remove(0, buffer.size() - in.device()->bytesAvailable());
+        if (in.atEnd()) return;
+    }
+}
+
 bool NetworkManager::isConnectionPending(QTcpSocket *socket) const { return m_pendingConnections.contains(socket); }
 
 void NetworkManager::connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath)
 {
     QTcpSocket *socket = new QTcpSocket(this);
-    // *** FIX: Mark this socket as a temporary transfer socket ***
     socket->setProperty("is_transfer_socket", true);
-
-    // Do NOT add this temporary socket to the main m_allTcpSockets list
-    // Its lifecycle is self-contained.
 
     connect(socket, &QTcpSocket::connected, this, [=]()
             {
@@ -63,9 +287,8 @@ void NetworkManager::connectAndRequestBundle(const QHostAddress &host, quint16 p
         out << QString("REQUEST_REPO_BUNDLE") << myUsername << repoName << localPath;
         socket->write(block); });
 
-    // Connect to the proper handlers, but disconnect will now just delete the socket.
     connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
-    connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater); // Self-delete on disconnect
+    connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
 
     m_socketToPeerUsernameMap.insert(socket, "Transfer:Cloning_" + repoName);
@@ -134,14 +357,14 @@ quint16 NetworkManager::getTcpServerPort() const
 bool NetworkManager::connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername)
 {
     if (getSocketForPeer(expectedPeerUsername))
-        return true; // Already connected or connecting
+        return true;
 
     QTcpSocket *socket = new QTcpSocket(this);
     socket->setProperty("is_outgoing_attempt", true);
 
     if (!m_allTcpSockets.contains(socket))
         m_allTcpSockets.append(socket);
-    m_socketToPeerUsernameMap.insert(socket, expectedPeerUsername);
+    m_socketToPeerUsernameMap.insert(socket, "ConnectingTo:" + expectedPeerUsername);
 
     connect(socket, &QTcpSocket::connected, this, [this, socket]()
             { sendIdentityOverTcp(socket); });
@@ -236,20 +459,6 @@ void NetworkManager::onUdpReadyRead()
             info.publicRepoNames = receivedPublicRepoNames;
             info.lastSeen = QDateTime::currentMSecsSinceEpoch();
 
-            if (m_discoveredPeers.contains(receivedUsername))
-            {
-                for (const QString &repo : m_discoveredPeers[receivedUsername].publicRepoNames)
-                {
-                    if (!info.publicRepoNames.contains(repo))
-                    {
-                        ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfoByDisplayName(repo);
-                        if (!repoInfo.appId.isEmpty() && !repoInfo.isPublic)
-                        {
-                            info.publicRepoNames.append(repo);
-                        }
-                    }
-                }
-            }
             m_discoveredPeers[receivedUsername] = info;
             emit lanPeerDiscoveredOrUpdated(info);
         }
@@ -276,26 +485,52 @@ void NetworkManager::onPeerCleanupTimerTimeout()
     }
 }
 
-void NetworkManager::sendMessageToPeer(QTcpSocket *peerSocket, const QString &message)
+void NetworkManager::sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args)
 {
-    if (peerSocket && peerSocket->state() == QAbstractSocket::ConnectedState)
-    {
-        QString peerUsername = m_socketToPeerUsernameMap.value(peerSocket, "");
-        if (peerUsername.startsWith("AwaitingID") || peerUsername.startsWith("ConnectingTo") || peerUsername.startsWith("Transfer:"))
-            return;
-        QByteArray block;
-        QDataStream out(&block, QIODevice::WriteOnly);
-        out.setVersion(QDataStream::Qt_5_15);
-        out << QString("CHAT_MESSAGE") << message;
-        peerSocket->write(block);
+    if (!peerSocket || peerSocket->state() != QAbstractSocket::ConnectedState) return;
+
+    QString peerUsername = m_socketToPeerUsernameMap.value(peerSocket, "");
+    if (peerUsername.startsWith("AwaitingID") || peerUsername.startsWith("ConnectingTo") || peerUsername.startsWith("Transfer:"))
+        return;
+
+    QByteArray block;
+    QDataStream out(&block, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_5_15);
+    out << messageType;
+    for(const QVariant& arg : args) {
+        out << arg;
     }
+    peerSocket->write(block);
 }
+
 
 void NetworkManager::broadcastTcpMessage(const QString &message)
 {
     for (QTcpSocket *s : qAsConst(m_allTcpSockets))
     {
-        sendMessageToPeer(s, message);
+        sendMessageToPeer(s, "BROADCAST_MESSAGE", {message});
+    }
+}
+
+void NetworkManager::sendGroupChatMessage(const QString &repoAppId, const QString &message)
+{
+    if (!m_repoManager_ptr) return;
+
+    ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfo(repoAppId);
+    if (repoInfo.appId.isEmpty()) return;
+
+    QStringList members;
+    members.append(repoInfo.adminPeerId);
+    members.append(repoInfo.collaborators);
+    members.removeDuplicates();
+
+    for (const QString& memberId : members) {
+        if (memberId == m_myUsername) continue;
+
+        QTcpSocket* memberSocket = getSocketForPeer(memberId);
+        if (memberSocket) {
+            sendMessageToPeer(memberSocket, "GROUP_CHAT_MESSAGE", {repoAppId, message});
+        }
     }
 }
 
@@ -306,23 +541,16 @@ void NetworkManager::sendIdentityOverTcp(QTcpSocket *socket)
     QByteArray block;
     QDataStream out(&block, QIODevice::WriteOnly);
     out.setVersion(QDataStream::Qt_5_15);
+    
+    QString expectedPeerId = m_socketToPeerUsernameMap.value(socket, "");
+    if (expectedPeerId.startsWith("ConnectingTo:")) {
+        expectedPeerId.remove("ConnectingTo:");
+        m_socketToPeerUsernameMap.insert(socket, expectedPeerId);
+    }
+    
     out << QString("IDENTITY_HANDSHAKE_V2") << m_myUsername << QString::fromStdString(m_identityManager->getMyPublicKeyHex());
     socket->write(block);
     m_handshakeSent.insert(socket);
-}
-
-void NetworkManager::onTcpSocketReadyRead()
-{
-    QTcpSocket *socket = qobject_cast<QTcpSocket *>(sender());
-    if (!socket)
-        return;
-
-    m_socketBuffers[socket].append(socket->readAll());
-
-    if (!m_pendingConnections.contains(socket))
-    {
-        processIncomingTcpData(socket);
-    }
 }
 
 QString NetworkManager::findUsernameForAddress(const QHostAddress &address)
@@ -342,140 +570,11 @@ QString NetworkManager::findUsernameForAddress(const QHostAddress &address)
     return QString();
 }
 
-void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
-{
-    QByteArray &buffer = m_socketBuffers[socket];
-
-    while (true)
-    {
-        if (m_incomingTransfers.contains(socket))
-        {
-            IncomingFileTransfer *transfer = m_incomingTransfers.value(socket);
-            qint64 bytesToWrite = qMin((qint64)buffer.size(), transfer->totalSize - transfer->bytesReceived);
-            if (bytesToWrite > 0)
-            {
-                transfer->file.write(buffer.constData(), bytesToWrite);
-                buffer.remove(0, bytesToWrite);
-                transfer->bytesReceived += bytesToWrite;
-                emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
-            }
-            if (transfer->bytesReceived < transfer->totalSize)
-            {
-                break; // Not enough data in buffer to finish transfer, wait for more.
-            }
-        }
-
-        QDataStream in(buffer);
-        in.setVersion(QDataStream::Qt_5_15);
-        in.startTransaction();
-
-        QString messageType;
-        in >> messageType;
-
-        bool transactionCommitted = false;
-
-        if (m_socketToPeerUsernameMap.value(socket) == "AwaitingID_Incoming")
-        {
-            if (messageType == "REQUEST_REPO_BUNDLE")
-            {
-                QString requestingPeer, repoName, temp;
-                in >> requestingPeer >> repoName >> temp;
-                if (in.commitTransaction())
-                {
-                    transactionCommitted = true;
-                    m_socketToPeerUsernameMap.insert(socket, "Transfer:" + repoName);
-                    handleRepoRequest(socket, requestingPeer, repoName);
-                }
-            }
-            else
-            {
-                in.rollbackTransaction();
-                m_socketToPeerUsernameMap.insert(socket, "ConnectingTo:" + socket->peerAddress().toString());
-                QString discoveredUsername = findUsernameForAddress(socket->peerAddress());
-                QTimer *timer = new QTimer(socket);
-                timer->setSingleShot(true);
-                connect(timer, &QTimer::timeout, this, [this, socket]()
-                        { if(m_pendingConnections.contains(socket)) rejectPendingTcpConnection(socket); });
-                timer->start(PENDING_CONNECTION_TIMEOUT_MS);
-                m_pendingConnections.insert(socket, timer);
-                emit incomingTcpConnectionRequest(socket, socket->peerAddress(), socket->peerPort(), discoveredUsername);
-                return; // STOP processing until user interaction
-            }
-        }
-        else if (messageType == "IDENTITY_HANDSHAKE_V2")
-        {
-            QString peerUsername, peerKeyHex;
-            in >> peerUsername >> peerKeyHex;
-            if (in.commitTransaction())
-            {
-                transactionCommitted = true;
-                m_socketToPeerUsernameMap.insert(socket, peerUsername);
-                m_peerPublicKeys.insert(peerUsername, QByteArray::fromHex(peerKeyHex.toUtf8()));
-                if (!m_handshakeSent.contains(socket))
-                    sendIdentityOverTcp(socket);
-                emit newTcpPeerConnected(socket, peerUsername, peerKeyHex);
-            }
-        }
-        else if (messageType == "SEND_REPO_BUNDLE_START")
-        {
-            QString repoName;
-            qint64 totalSize;
-            in >> repoName >> totalSize;
-            if (in.commitTransaction())
-            {
-                transactionCommitted = true;
-                QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
-                auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
-                if (transfer->file.open(QIODevice::WriteOnly))
-                    m_incomingTransfers.insert(socket, transfer);
-                else
-                    delete transfer;
-            }
-        }
-        else if (messageType == "SEND_REPO_BUNDLE_END")
-        {
-            QString repoName;
-            in >> repoName;
-            if (in.commitTransaction())
-            {
-                transactionCommitted = true;
-                if (m_incomingTransfers.contains(socket))
-                {
-                    IncomingFileTransfer *transfer = m_incomingTransfers.take(socket);
-                    transfer->file.close();
-                    bool success = (transfer->bytesReceived == transfer->totalSize);
-                    emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Transfer complete." : "Size mismatch.");
-                    delete transfer;
-                    // Disconnect the temporary socket now that the transfer is done.
-                    socket->disconnectFromHost();
-                }
-            }
-        }
-        else if (messageType == "CHAT_MESSAGE" || messageType == "ENCRYPTED_PAYLOAD")
-        {
-            // Simplified handling for other messages
-            in.rollbackTransaction(); // Let the full block be handled by specific logic if needed, for now just break
-            break;
-        }
-
-        if (transactionCommitted)
-        {
-            buffer.remove(0, in.device()->pos());
-        }
-        else
-        {
-            break; // Incomplete message in buffer, wait for more data.
-        }
-    }
-}
-
 void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath)
 {
-    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
-        return;
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState) return;
     QFile bundleFile(bundleFilePath);
-    if (!bundleFile.open(QIODevice::ReadOnly))
-        return;
+    if (!bundleFile.open(QIODevice::ReadOnly)) return;
 
     QByteArray startBlock;
     QDataStream startOut(&startBlock, QIODevice::WriteOnly);
@@ -509,71 +608,38 @@ void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QStr
     QFile::remove(bundleFilePath);
 }
 
-void NetworkManager::onNewTcpConnection()
-{
-    while (m_tcpServer->hasPendingConnections())
-    {
-        QTcpSocket *socket = m_tcpServer->nextPendingConnection();
-        if (socket)
-        {
-            connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
-            connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
-            connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
-            if (!m_allTcpSockets.contains(socket))
-                m_allTcpSockets.append(socket);
-            m_socketToPeerUsernameMap.insert(socket, "AwaitingID_Incoming");
-        }
-    }
-}
-
-void NetworkManager::acceptPendingTcpConnection(QTcpSocket *pendingSocket)
-{
-    if (m_pendingConnections.contains(pendingSocket))
-    {
-        QTimer *timer = m_pendingConnections.take(pendingSocket);
-        if (timer)
-            timer->deleteLater();
-        if (m_socketBuffers.contains(pendingSocket))
-        {
-            processIncomingTcpData(pendingSocket);
-        }
-    }
-}
-
 void NetworkManager::rejectPendingTcpConnection(QTcpSocket *pendingSocket)
 {
     if (m_pendingConnections.contains(pendingSocket))
     {
-        m_pendingConnections.remove(pendingSocket);
+        qDebug() << "Rejecting or timing out connection from" << pendingSocket->peerAddress().toString();
+        QTimer *timer = m_pendingConnections.take(pendingSocket);
+        if (timer) timer->deleteLater();
         pendingSocket->disconnectFromHost();
     }
 }
 
-void NetworkManager::onTcpSocketStateChanged(QAbstractSocket::SocketState socketState) { Q_UNUSED(socketState); }
-
 void NetworkManager::onTcpSocketDisconnected()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket *>(sender());
-    if (!socket)
-        return;
-
-    // *** FIX: If this was a temporary transfer socket, just clean it up and do nothing else. ***
+    if (!socket) return;
+    
     if (socket->property("is_transfer_socket").toBool())
     {
         m_socketBuffers.remove(socket);
         m_socketToPeerUsernameMap.remove(socket);
-        if (m_incomingTransfers.contains(socket))
-            delete m_incomingTransfers.take(socket);
-        // The socket will self-delete due to the deleteLater connection.
+        if (m_incomingTransfers.contains(socket)) delete m_incomingTransfers.take(socket);
         return;
     }
 
     m_allTcpSockets.removeAll(socket);
     m_socketBuffers.remove(socket);
     m_handshakeSent.remove(socket);
-    m_pendingConnections.remove(socket);
-    if (m_incomingTransfers.contains(socket))
-        delete m_incomingTransfers.take(socket);
+    if (m_pendingConnections.contains(socket)) {
+        QTimer *timer = m_pendingConnections.take(socket);
+        if (timer) timer->deleteLater();
+    }
+    if (m_incomingTransfers.contains(socket)) delete m_incomingTransfers.take(socket);
 
     QString peerUsername = m_socketToPeerUsernameMap.take(socket);
     if (!peerUsername.isEmpty() && !peerUsername.startsWith("AwaitingID") && !peerUsername.startsWith("Transfer:") && !peerUsername.startsWith("ConnectingTo"))
@@ -588,8 +654,7 @@ void NetworkManager::onTcpSocketError(QAbstractSocket::SocketError socketError)
 {
     Q_UNUSED(socketError);
     QTcpSocket *socket = qobject_cast<QTcpSocket *>(sender());
-    if (!socket)
-        return;
+    if (!socket) return;
     qWarning() << "Socket Error on" << getPeerDisplayString(socket) << ":" << socket->errorString();
     socket->disconnectFromHost();
 }
@@ -621,8 +686,7 @@ QList<QString> NetworkManager::getConnectedPeerIds() const
 
 void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &messageType, const QVariantMap &payload)
 {
-    if (!socket)
-        return;
+    if (!socket) return;
     QString peerId = m_socketToPeerUsernameMap.value(socket);
     if (peerId.isEmpty() || !m_peerPublicKeys.contains(peerId))
     {
@@ -663,9 +727,7 @@ void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &mes
 
 void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName)
 {
-    if (!m_repoManager_ptr)
-        return;
-
+    if (!m_repoManager_ptr) return;
     bool canAccess = false;
     ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfoByDisplayName(repoName);
     if (!repoInfo.appId.isEmpty())
@@ -675,7 +737,6 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
             canAccess = true;
         }
     }
-
     if (canAccess)
     {
         emit repoBundleRequestedByPeer(socket, requestingPeer, repoName, "");

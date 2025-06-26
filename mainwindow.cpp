@@ -73,16 +73,6 @@ MainWindow::~MainWindow()
     delete m_identityManager;
 }
 
-void MainWindow::closeEvent(QCloseEvent *event)
-{
-    if (m_networkManager)
-    {
-        m_networkManager->stopUdpDiscovery();
-        m_networkManager->stopTcpServer();
-    }
-    event->accept();
-}
-
 void MainWindow::setupUi()
 {
     setWindowTitle("P2P Git Client - " + m_myUsername);
@@ -96,46 +86,50 @@ void MainWindow::setupUi()
     m_networkPanel = new NetworkPanel(mainSplitter);
     mainSplitter->addWidget(m_repoManagementPanel);
     mainSplitter->addWidget(m_networkPanel);
-    mainSplitter->setSizes({800, 600});
+    mainSplitter->setSizes({600, 800});
 
     mainVLayout->addWidget(mainSplitter);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_networkManager)
+    {
+        m_networkManager->stopUdpDiscovery();
+        m_networkManager->stopTcpServer();
+    }
+    event->accept();
 }
 
 void MainWindow::connectSignals()
 {
     connect(m_repoManager, &RepositoryManager::managedRepositoryListChanged, this, &MainWindow::updateUiFromBackend);
+    
     if (m_networkManager)
     {
         connect(m_networkManager, &NetworkManager::lanPeerDiscoveredOrUpdated, this, &MainWindow::updateUiFromBackend);
         connect(m_networkManager, &NetworkManager::lanPeerLost, this, &MainWindow::updateUiFromBackend);
         connect(m_networkManager, &NetworkManager::newTcpPeerConnected, this, &MainWindow::updateUiFromBackend);
         connect(m_networkManager, &NetworkManager::tcpPeerDisconnected, this, &MainWindow::updateUiFromBackend);
-        connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
         connect(m_networkManager, &NetworkManager::incomingTcpConnectionRequest, this, &MainWindow::handleIncomingTcpConnectionRequest);
+        connect(m_networkManager, &NetworkManager::broadcastMessageReceived, this, &MainWindow::handleBroadcastMessage);
+        connect(m_networkManager, &NetworkManager::groupMessageReceived, this, &MainWindow::handleGroupMessage);
         connect(m_networkManager, &NetworkManager::repoBundleRequestedByPeer, this, &MainWindow::handleRepoBundleRequest);
         connect(m_networkManager, &NetworkManager::repoBundleCompleted, this, &MainWindow::handleRepoBundleCompleted);
         connect(m_networkManager, &NetworkManager::tcpServerStatusChanged, m_networkPanel, &NetworkPanel::updateServerStatus);
-
-        connect(m_networkManager, &NetworkManager::tcpMessageReceived, this, [this](QTcpSocket *socket, const QString &peer, const QString &msg)
-                {
-            Q_UNUSED(socket); // We don't need the socket pointer in the UI panel for this log message
-            m_networkPanel->logChatMessage(peer, msg); });
-
-        connect(m_networkManager, &NetworkManager::repoBundleSent, this, [this](const QString &repoName, const QString &recipient)
-                { m_networkPanel->logMessage(QString("Sent bundle for '%1' to peer '%2'.").arg(repoName, recipient), "purple"); });
+        connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
     }
 
-    connect(m_repoManagementPanel, &RepoManagementPanel::addRepoClicked, this, [this]()
-            { handleAddManagedRepo(); });
+    connect(m_repoManagementPanel, &RepoManagementPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
+    connect(m_repoManagementPanel, &RepoManagementPanel::addRepoClicked, this, [this](){ handleAddManagedRepo(); });
     connect(m_repoManagementPanel, &RepoManagementPanel::modifyAccessClicked, this, &MainWindow::handleModifyRepoAccess);
     connect(m_repoManagementPanel, &RepoManagementPanel::deleteRepoClicked, this, &MainWindow::handleDeleteRepo);
-    connect(m_repoManagementPanel, &RepoManagementPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
 
+    connect(m_networkPanel, &NetworkPanel::sendBroadcastMessageRequested, this, &MainWindow::handleSendBroadcastMessage);
     connect(m_networkPanel, &NetworkPanel::toggleDiscoveryRequested, this, &MainWindow::handleToggleDiscovery);
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaborator);
-    connect(m_networkPanel, &NetworkPanel::sendMessageRequested, this, &MainWindow::handleSendMessage);
 }
 
 void MainWindow::updateUiFromBackend()
@@ -143,8 +137,98 @@ void MainWindow::updateUiFromBackend()
     m_repoManagementPanel->updateRepoList(m_repoManager->getAllManagedRepositories());
     if (m_networkManager)
     {
-        m_networkPanel->updatePeerList(m_networkManager->getDiscoveredPeers(), m_networkManager->getConnectedPeerIds());
-        m_networkPanel->updateConnectedPeersList(m_networkManager->getConnectedPeerIds());
+        QList<QString> connectedPeers = m_networkManager->getConnectedPeerIds();
+        m_networkPanel->updatePeerList(m_networkManager->getDiscoveredPeers(), connectedPeers);
+        
+        for(ProjectWindow* pw : m_projectWindows.values()) {
+            pw->updateGroupMembers();
+        }
+    }
+}
+
+void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
+{
+    if (m_projectWindows.contains(appId))
+    {
+        m_projectWindows[appId]->activateWindow();
+        return;
+    }
+    
+    ProjectWindow *projectWindow = new ProjectWindow(appId, m_repoManager, m_networkManager, this);
+    projectWindow->setAttribute(Qt::WA_DeleteOnClose);
+    
+    m_projectWindows.insert(appId, projectWindow);
+    
+    connect(projectWindow, &ProjectWindow::groupMessageSent, this, &MainWindow::handleProjectWindowGroupMessage);
+    connect(projectWindow, &QObject::destroyed, this, [this, appId](){
+        m_projectWindows.remove(appId);
+    });
+    
+    projectWindow->show();
+}
+
+void MainWindow::handleProjectWindowGroupMessage(const QString& appId, const QString& message)
+{
+    m_networkManager->sendGroupChatMessage(appId, message);
+    
+    if (m_projectWindows.contains(appId)) {
+        m_projectWindows[appId]->displayGroupMessage(m_myUsername, message);
+    }
+}
+
+void MainWindow::handleGroupMessage(const QString &peerId, const QString &repoAppId, const QString &message)
+{
+    if (m_projectWindows.contains(repoAppId)) {
+        m_projectWindows[repoAppId]->displayGroupMessage(peerId, message);
+    }
+    
+    ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(repoAppId);
+    QString repoName = repoInfo.displayName.isEmpty() ? repoAppId : repoInfo.displayName;
+    m_networkPanel->logGroupChatMessage(repoName, peerId, message);
+}
+
+void MainWindow::handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg)
+{
+    Q_UNUSED(socket);
+    m_networkPanel->logBroadcastMessage(peer, msg);
+}
+
+void MainWindow::handleSendBroadcastMessage(const QString &message)
+{
+    m_networkManager->broadcastTcpMessage(message);
+    m_networkPanel->logBroadcastMessage(m_myUsername, message);
+}
+
+void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username)
+{
+    QString pkh;
+    DiscoveredPeerInfo peerInfo = m_networkManager->getDiscoveredPeerInfo(username);
+    if (!peerInfo.publicKeyHex.isEmpty())
+    {
+        pkh = " (PKH: " + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8) + "...)";
+    }
+    QString peerDisplay = !username.isEmpty() ? username + pkh : address.toString();
+
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("Peer Connection Request");
+    msgBox.setText(QString("Peer '%1' at %2 wants to establish a connection with you.").arg(peerDisplay.toHtmlEscaped(), address.toString()));
+    msgBox.setInformativeText("Do you want to accept?");
+    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    msgBox.setDefaultButton(QMessageBox::No);
+
+    if (msgBox.exec() == QMessageBox::Yes)
+    {
+        if (m_networkManager && m_networkManager->isConnectionPending(socket))
+        {
+            m_networkManager->acceptPendingTcpConnection(socket);
+        }
+    }
+    else
+    {
+        if (m_networkManager && m_networkManager->isConnectionPending(socket))
+        {
+            m_networkManager->rejectPendingTcpConnection(socket);
+        }
     }
 }
 
@@ -213,29 +297,6 @@ void MainWindow::handleDeleteRepo(const QString &appId)
     {
         m_repoManager->removeManagedRepository(appId);
         m_networkManager->sendDiscoveryBroadcast();
-    }
-}
-
-void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
-{
-    ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
-    if (!repoInfo.appId.isEmpty())
-    {
-        for (ProjectWindow *window : m_projectWindows)
-        {
-            if (window->property("repoPath") == repoInfo.localPath)
-            {
-                window->activateWindow();
-                return;
-            }
-        }
-        ProjectWindow *projectWindow = new ProjectWindow(repoInfo.localPath);
-        projectWindow->setAttribute(Qt::WA_DeleteOnClose);
-        projectWindow->setProperty("repoPath", repoInfo.localPath);
-        m_projectWindows.append(projectWindow);
-        connect(projectWindow, &QObject::destroyed, this, [this, projectWindow]()
-                { m_projectWindows.removeAll(projectWindow); });
-        projectWindow->show();
     }
 }
 
@@ -314,40 +375,42 @@ void MainWindow::handleToggleDiscovery()
     }
 }
 
-void MainWindow::handleSendMessage(const QString &message)
-{
-    m_networkManager->broadcastTcpMessage(message);
-}
-
 void MainWindow::handleAddCollaborator(const QString &peerId)
 {
-    // FIX: Ensure we are actually connected to this peer.
     if (!m_networkManager || m_networkManager->getSocketForPeer(peerId) == nullptr)
     {
-        QMessageBox::warning(this, "Not Connected", QString("You must have an established TCP connection with '%1' to share repositories.").arg(peerId));
+        QMessageBox::warning(this, "Not Connected", QString("You must have an established TCP connection with '%1' to add them as a collaborator.").arg(peerId));
         return;
     }
 
-    QList<ManagedRepositoryInfo> privateRepos = m_repoManager->getMyPrivateRepositories(m_myUsername);
-    if (privateRepos.isEmpty())
+    QList<ManagedRepositoryInfo> myOwnedRepos = m_repoManager->getMyPrivateRepositories(m_myUsername);
+    if (myOwnedRepos.isEmpty())
     {
-        QMessageBox::information(this, "No Private Repositories", "You do not own any private repositories to share.");
+        QMessageBox::information(this, "No Owned Repositories", "You do not own any private repositories to share.");
         return;
     }
 
     QDialog dialog(this);
-    dialog.setWindowTitle("Share Private Repositories");
+    dialog.setWindowTitle("Add Collaborator");
     QVBoxLayout layout(&dialog);
     QListWidget listWidget(&dialog);
-    for (const auto &repo : privateRepos)
+    for (const auto &repo : myOwnedRepos)
     {
+        if (repo.collaborators.contains(peerId)) continue;
+        
         auto *item = new QListWidgetItem(repo.displayName, &listWidget);
         item->setData(Qt::UserRole, repo.appId);
     }
+
+    if (listWidget.count() == 0) {
+        QMessageBox::information(this, "Already Collaborator", QString("Peer '%1' is already a collaborator on all of your private repositories.").arg(peerId));
+        return;
+    }
+
     listWidget.setSelectionMode(QAbstractItemView::MultiSelection);
-    layout.addWidget(new QLabel(QString("Select private repositories to share with '%1':").arg(peerId), &dialog));
+    layout.addWidget(new QLabel(QString("Select repositories to add '%1' as a collaborator:").arg(peerId), &dialog));
     layout.addWidget(&listWidget);
-    QPushButton okButton("Share", &dialog);
+    QPushButton okButton("Add", &dialog);
     connect(&okButton, &QPushButton::clicked, &dialog, &QDialog::accept);
     layout.addWidget(&okButton);
 
@@ -356,21 +419,17 @@ void MainWindow::handleAddCollaborator(const QString &peerId)
         for (auto *item : listWidget.selectedItems())
         {
             QString appId = item->data(Qt::UserRole).toString();
-            ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
-
-            // FIX: Add a redundant but safe check here.
-            if (repoInfo.isPublic)
-            {
-                QMessageBox::warning(this, "Cannot Share Public Repo", QString("The repository '%1' is already public. You can only add collaborators to private repositories.").arg(repoInfo.displayName));
-                continue; // Skip this one
-            }
-
             m_repoManager->addCollaborator(appId, peerId);
+            m_networkPanel->logMessage(QString("Added '%1' as a collaborator to '%2'.").arg(peerId, item->text()), "green");
+
+            ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
             QVariantMap payload;
-            payload["appId"] = appId;
-            payload["repoName"] = item->text();
-            m_networkManager->sendEncryptedMessage(m_networkManager->getSocketForPeer(peerId), "SHARE_PRIVATE_REPO", payload);
+            payload["appId"] = repoInfo.appId;
+            payload["repoName"] = repoInfo.displayName;
+            payload["ownerId"] = repoInfo.adminPeerId;
+            m_networkManager->sendEncryptedMessage(m_networkManager->getSocketForPeer(peerId), "COLLABORATOR_ADDED", payload);
         }
+        updateUiFromBackend(); 
     }
 }
 
@@ -385,40 +444,6 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
         if (m_networkManager)
         {
             m_networkManager->addSharedRepoToPeer(peerId, repoName);
-        }
-    }
-}
-
-void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username)
-{
-    QString pkh;
-    DiscoveredPeerInfo peerInfo = m_networkManager->getDiscoveredPeerInfo(username);
-    if (!peerInfo.publicKeyHex.isEmpty())
-    {
-        pkh = " (PKH: " + QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8) + "...)";
-    }
-    QString peerDisplay = !username.isEmpty() ? username + pkh : address.toString();
-
-    QMessageBox msgBox(this);
-    msgBox.setWindowTitle("Peer Connection Request");
-    msgBox.setText(QString("Peer '%1' wants to establish a connection with you. Accept?").arg(peerDisplay.toHtmlEscaped()));
-    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-    msgBox.setDefaultButton(QMessageBox::No);
-
-    // The network manager handles the timeout now.
-
-    if (msgBox.exec() == QMessageBox::Yes)
-    {
-        if (m_networkManager && m_networkManager->isConnectionPending(socket))
-        {
-            m_networkManager->acceptPendingTcpConnection(socket);
-        }
-    }
-    else
-    {
-        if (m_networkManager && m_networkManager->isConnectionPending(socket))
-        {
-            m_networkManager->rejectPendingTcpConnection(socket);
         }
     }
 }
@@ -440,7 +465,6 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
         return;
     }
 
-    // Permission check already happened in NetworkManager, but a check here is good for defense-in-depth.
     bool canAccess = repoToBundle.isPublic || repoToBundle.collaborators.contains(sourcePeerUsername);
     if (!canAccess)
     {

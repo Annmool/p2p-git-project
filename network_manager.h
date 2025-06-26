@@ -49,6 +49,7 @@ public:
     void stopUdpDiscovery();
     void sendDiscoveryBroadcast();
     void broadcastTcpMessage(const QString &message);
+    void sendGroupChatMessage(const QString &repoAppId, const QString &message);
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
@@ -58,12 +59,14 @@ public:
     QList<QString> getConnectedPeerIds() const;
     bool isConnectionPending(QTcpSocket *socket) const;
     void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
+    QString getMyUsername() const { return m_myUsername; } // New getter
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
     void newTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex);
     void tcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername);
-    void tcpMessageReceived(QTcpSocket *peerSocket, const QString &peerUsername, const QString &message);
+    void broadcastMessageReceived(QTcpSocket *peerSocket, const QString &peerUsername, const QString &message);
+    void groupMessageReceived(const QString &peerUsername, const QString &repoAppId, const QString &message);
     void tcpServerStatusChanged(bool listening, quint16 port, const QString &error = "");
     void tcpConnectionStatusChanged(const QString &peerUsername, const QString &peerPublicKeyHex, bool connected, const QString &error = "");
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
@@ -77,7 +80,6 @@ signals:
 
 private slots:
     void onNewTcpConnection();
-    void onTcpSocketStateChanged(QAbstractSocket::SocketState socketState);
     void onTcpSocketReadyRead();
     void onTcpSocketDisconnected();
     void onTcpSocketError(QAbstractSocket::SocketError socketError);
@@ -88,11 +90,7 @@ private slots:
 private:
     struct IncomingFileTransfer
     {
-        enum TransferState
-        {
-            Receiving,
-            Completed
-        };
+        enum TransferState { Receiving, Completed };
         TransferState state = Receiving;
         QString repoName;
         QString tempLocalPath;
@@ -121,10 +119,11 @@ private:
     QString getPeerDisplayString(QTcpSocket *socket);
     void processIncomingTcpData(QTcpSocket *socket);
     void sendIdentityOverTcp(QTcpSocket *socket);
-    void setupAcceptedSocket(QTcpSocket *socket);
     QString findUsernameForAddress(const QHostAddress &address);
-    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &message);
+    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args);
     void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
+    void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);
+
 };
 
 #endif // NETWORK_MANAGER_H

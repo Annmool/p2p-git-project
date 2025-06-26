@@ -32,6 +32,7 @@ public:
     bool removeManagedRepository(const QString &appId);
     bool setRepositoryVisibility(const QString &appId, bool isPublic);
     bool addCollaborator(const QString &appId, const QString &peerId);
+    ManagedRepositoryInfo getRepositoryInfoByOrigin(const QString &originPeerId, const QString &displayName) const;
 
     ManagedRepositoryInfo getRepositoryInfo(const QString &appId) const;
     ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
@@ -39,6 +40,7 @@ public:
     QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
     QList<ManagedRepositoryInfo> getMyPubliclySharedRepositories(const QString &requestingPeer) const;
     QList<ManagedRepositoryInfo> getMyPrivateRepositories(const QString &myPeerId) const;
+    QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf(const QString &myPeerId) const;
 
 signals:
     void managedRepositoryListChanged();

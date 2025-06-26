@@ -4,6 +4,7 @@
 #include <QWidget>
 #include <QIcon>
 #include "network_manager.h" // For DiscoveredPeerInfo struct
+#include "repository_manager.h" // For ManagedRepositoryInfo
 
 QT_BEGIN_NAMESPACE
 class QTreeWidget;
@@ -13,6 +14,7 @@ class QLineEdit;
 class QTextEdit;
 class QLabel;
 class QTreeWidgetItem;
+class QComboBox;
 QT_END_NAMESPACE
 
 class NetworkPanel : public QWidget
@@ -21,22 +23,25 @@ class NetworkPanel : public QWidget
 public:
     explicit NetworkPanel(QWidget *parent = nullptr);
 
-    // This function is the key to connecting the panel to the backend
     void setNetworkManager(NetworkManager *manager);
 
     void setMyPeerInfo(const QString &username, const QString &publicKeyHex);
     void updatePeerList(const QMap<QString, DiscoveredPeerInfo> &discoveredPeers, const QList<QString> &connectedPeerIds);
-    void updateConnectedPeersList(const QList<QString> &connectedPeerIds);
+    void updateGroupList(const QList<ManagedRepositoryInfo> &myGroupRepos);
+    void updateGroupMembersList(const ManagedRepositoryInfo& repoInfo, const QList<QString>& connectedPeerIds);
     void logMessage(const QString &message, const QColor &color);
-    void logChatMessage(const QString &peerId, const QString &message);
+    void logBroadcastMessage(const QString &peerId, const QString &message);
+    void logGroupChatMessage(const QString &repoName, const QString &peerId, const QString &message);
     void updateServerStatus(bool listening, quint16 port, const QString &error);
 
 signals:
     void connectToPeerRequested(const QString &peerId);
     void cloneRepoRequested(const QString &peerId, const QString &repoName);
-    void sendMessageRequested(const QString &message);
+    void sendBroadcastMessageRequested(const QString &message);
+    void sendGroupMessageRequested(const QString &repoAppId, const QString &message);
     void toggleDiscoveryRequested();
     void addCollaboratorRequested(const QString &peerId);
+    void groupSelectionChanged(const QString &repoAppId);
 
 private slots:
     void onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current);
@@ -57,7 +62,8 @@ private:
     QTreeWidget *discoveredPeersTreeWidget;
     QPushButton *connectToPeerButton;
     QPushButton *cloneRepoButton;
-    QListWidget *connectedTcpPeersList;
+    QListWidget *m_groupMembersList;
+    QComboBox *m_groupChatSelector;
     QLineEdit *messageInput;
     QPushButton *sendMessageButton;
     QTextEdit *networkLogDisplay;

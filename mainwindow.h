@@ -4,7 +4,8 @@
 #include <QMainWindow>
 #include <QCloseEvent>
 #include <QList>
-#include "network_manager.h" // For DiscoveredPeerInfo struct
+#include <QMap>
+#include "network_manager.h" 
 
 QT_BEGIN_NAMESPACE
 class QListWidgetItem;
@@ -39,12 +40,16 @@ private slots:
     void handleConnectToPeer(const QString &peerId);
     void handleCloneRepo(const QString &peerId, const QString &repoName);
     void handleAddCollaborator(const QString &peerId);
-    void handleSendMessage(const QString &message);
+    void handleSendBroadcastMessage(const QString &message);
+    
+    void handleProjectWindowGroupMessage(const QString& appId, const QString& message);
 
     void handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username);
     void handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
+    void handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg);
+    void handleGroupMessage(const QString &peerId, const QString &repoAppId, const QString &message);
 
     void updateUiFromBackend();
 
@@ -52,6 +57,7 @@ private:
     void setupUi();
     void connectSignals();
 
+    // Re-added the struct definition
     struct PendingCloneRequest
     {
         QString peerId;
@@ -73,10 +79,11 @@ private:
     IdentityManager *m_identityManager;
     RepositoryManager *m_repoManager;
     NetworkManager *m_networkManager;
+    
+    QMap<QString, ProjectWindow *> m_projectWindows;
 
     NetworkPanel *m_networkPanel;
     RepoManagementPanel *m_repoManagementPanel;
-    QList<ProjectWindow *> m_projectWindows;
 };
 
 #endif // MAINWINDOW_H
