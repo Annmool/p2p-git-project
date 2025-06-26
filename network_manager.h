@@ -11,11 +11,12 @@
 #include <QMap>
 #include <QMetaType>
 #include <QVariantMap>
-#include <QFile>
+#include <QFile> // Added
 #include <QSet>
+#include <QElapsedTimer> // Added
 #include "identity_manager.h"
 
-class RepositoryManager;
+class RepositoryManager; // Forward declaration
 
 struct DiscoveredPeerInfo
 {
@@ -23,10 +24,61 @@ struct DiscoveredPeerInfo
     QHostAddress address;
     quint16 tcpPort;
     QString publicKeyHex;
-    QList<QString> publicRepoNames;
+    QList<QString> publicRepoNames; // Repositories this peer advertises as shareable (public or shared with me)
     qint64 lastSeen;
 };
 Q_DECLARE_METATYPE(DiscoveredPeerInfo)
+
+// Struct to track an incoming file transfer (bundle reception)
+struct IncomingFileTransfer
+{
+    enum TransferState
+    {
+        Receiving,
+        Completed
+    };
+    TransferState state = Receiving;
+    QString repoName;
+    QString tempLocalPath;
+    QFile *file = nullptr; // Pointer to the open file (heap allocated)
+    qint64 totalSize = 0;
+    qint64 bytesReceived = 0;
+
+    // Destructor to ensure the file is deleted if the struct is deleted early
+    ~IncomingFileTransfer()
+    {
+        if (file)
+        {
+            if (file->isOpen())
+                file->close();
+            delete file;
+            file = nullptr;
+        }
+    }
+};
+
+// Struct to track an outgoing file transfer (bundle sending)
+struct OutgoingFileTransfer
+{
+    QFile *file = nullptr; // Pointer to the file being sent (heap allocated)
+    QString repoName;
+    QString bundleFilePath; // Path to the source bundle file (for cleanup)
+    qint64 totalSize = 0;
+    qint64 bytesSent = 0; // Bytes sent *of the file data* (after initial header)
+    // Optional: QElapsedTimer timer;
+
+    // Destructor to ensure the file is deleted if the struct is deleted early
+    ~OutgoingFileTransfer()
+    {
+        if (file)
+        {
+            if (file->isOpen())
+                file->close();
+            delete file;
+            file = nullptr;
+        }
+    }
+};
 
 class NetworkManager : public QObject
 {
@@ -72,10 +124,10 @@ signals:
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
     void lanPeerLost(const QString &peerUsername);
     void repoBundleRequestedByPeer(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
-    void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);
-    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
-    void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
-    void repoBundleSent(const QString &repoName, const QString &recipientUsername);
+    void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);                                   // Emitted by receiving peer
+    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);                          // Emitted by receiving peer
+    void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message); // Emitted by receiving peer
+    void repoBundleSent(const QString &repoName, const QString &recipientUsername);                                          // Emitted by sending peer
     void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
 
 private slots:
@@ -88,42 +140,40 @@ private slots:
     void onPeerCleanupTimerTimeout();
 
 private:
-    struct IncomingFileTransfer
-    {
-        enum TransferState { Receiving, Completed };
-        TransferState state = Receiving;
-        QString repoName;
-        QString tempLocalPath;
-        QFile file;
-        qint64 totalSize = 0;
-        qint64 bytesReceived = 0;
-    };
-    QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
-    QMap<QTcpSocket *, QByteArray> m_socketBuffers;
-    QSet<QTcpSocket *> m_handshakeSent;
+    // Removed struct definitions from here, moved above
+
+    QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers; // Map socket to incoming transfer
+    QMap<QTcpSocket *, OutgoingFileTransfer *> m_outgoingTransfers; // Map socket to outgoing transfer
+
+    QMap<QTcpSocket *, QByteArray> m_socketBuffers; // Buffer for incoming data
+    QSet<QTcpSocket *> m_handshakeSent;             // Keep track of sockets where we sent our identity
 
     QTcpServer *m_tcpServer;
-    QList<QTcpSocket *> m_allTcpSockets;
-    QMap<QTcpSocket *, QString> m_socketToPeerUsernameMap;
-    QMap<QTcpSocket *, QTimer *> m_pendingConnections;
+    QList<QTcpSocket *> m_allTcpSockets;                   // List of all active sockets
+    QMap<QTcpSocket *, QString> m_socketToPeerUsernameMap; // Map socket to peer ID (can be temporary/pending)
+    QMap<QTcpSocket *, QTimer *> m_pendingConnections;     // Map pending incoming sockets to handshake timers
+
     QString m_myUsername;
-    IdentityManager *m_identityManager;
-    RepositoryManager *m_repoManager_ptr;
-    QMap<QString, QByteArray> m_peerPublicKeys;
+    IdentityManager *m_identityManager;         // Not owned
+    RepositoryManager *m_repoManager_ptr;       // Not owned
+    QMap<QString, QByteArray> m_peerPublicKeys; // Map peer ID to their public key bytes (for encryption)
+
     QUdpSocket *m_udpSocket;
-    quint16 m_udpDiscoveryPort;
-    QTimer *m_broadcastTimer;
-    QTimer *m_peerCleanupTimer;
-    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
+    quint16 m_udpDiscoveryPort = 45454;                  // Default UDP port
+    QTimer *m_broadcastTimer;                            // Timer for sending UDP broadcasts
+    QTimer *m_peerCleanupTimer;                          // Timer for cleaning up old discovered peers
+    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers; // Map peer ID to discovery info
 
-    QString getPeerDisplayString(QTcpSocket *socket);
-    void processIncomingTcpData(QTcpSocket *socket);
-    void sendIdentityOverTcp(QTcpSocket *socket);
-    QString findUsernameForAddress(const QHostAddress &address);
-    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args);
-    void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
-    void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);
+    QString getPeerDisplayString(QTcpSocket *socket);                                                     // Helper for logging socket info
+    void processIncomingTcpData(QTcpSocket *socket);                                                      // Processes data from the socket buffer
+    void sendIdentityOverTcp(QTcpSocket *socket);                                                         // Sends our identity handshake message
+    QString findUsernameForAddress(const QHostAddress &address);                                          // Tries to find a known username for an IP address
+    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args); // Generic message sender
+    void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);   // Handles incoming bundle request message
+    void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);                       // Handles decrypted secure messages
 
+    // Helper for cleaning up failed outgoing transfers
+    void handleOutgoingTransferError(QTcpSocket *socket, const QString &message);
 };
 
 #endif // NETWORK_MANAGER_H
