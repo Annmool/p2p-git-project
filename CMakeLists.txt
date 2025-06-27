@@ -17,7 +17,7 @@ pkg_check_modules(SODIUM REQUIRED libsodium)
 # --- Define Your Executable Target ---
 add_executable(${PROJECT_NAME}
 main.cpp
-    
+
 # Core Backend
 git_backend.cpp
 identity_manager.cpp

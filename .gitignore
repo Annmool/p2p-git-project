@@ -1,4 +1,6 @@
-# CMake / Build output
+// .gitignore
+//
+// CMake / Build output
 build/
 CMakeCache.txt
 CMakeFiles/
@@ -59,3 +61,5 @@ latex/
 # CLion
 .idea/
 
+# Temp files for bundles
+**/P2PGitBundles/

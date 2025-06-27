@@ -9,36 +9,30 @@
 #include <QUuid>
 #include <algorithm> // Required for std::sort
 
-// JSON Keys for serialization (kept consistent)
-const QString JSON_KEY_DISPLAY_NAME = "displayName";
-const QString JSON_KEY_LOCAL_PATH = "localPath";
-const QString JSON_KEY_IS_PUBLIC = "isPublic";
-const QString JSON_KEY_ADMIN_PEER_ID = "adminPeerId";   // Owner of the repo entry
-const QString JSON_KEY_COLLABORATORS = "collaborators"; // List of peers added as collaborators (by adminPeerId)
-const QString JSON_KEY_ORIGIN_PEER_ID = "originPeerId"; // The peer from whom this repo was cloned (empty if owned locally)
+// JSON Keys imported from header
 
-// Updated constructor signature to accept myPeerId
 RepositoryManager::RepositoryManager(const QString &storageFilePath, const QString &myPeerId, QObject *parent)
     : QObject(parent), m_storageFilePath(storageFilePath), m_myPeerId(myPeerId)
 {
-    // Ensure meta type is registered for ManagedRepositoryInfo if signals queue it
-    qRegisterMetaType<ManagedRepositoryInfo>("ManagedRepositoryInfo");
-    qRegisterMetaType<QList<ManagedRepositoryInfo>>("QList<ManagedRepositoryInfo>");
+    // Metatypes are declared in the header outside class scope, no need to re-declare here
+    // qRegisterMetaType<ManagedRepositoryInfo>("ManagedRepositoryInfo");
+    // qRegisterMetaType<QList<ManagedRepositoryInfo>>("QList<ManagedRepositoryInfo>");
 
-    loadRepositoriesFromFile(); // Load existing managed repositories on startup
+    loadRepositoriesFromFile();
 }
 
 RepositoryManager::~RepositoryManager()
 {
-    saveRepositoriesToFile(); // Save the current state when the manager is destroyed
+    saveRepositoriesToFile();
 }
 
-bool RepositoryManager::addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId)
+// Updated add method
+bool RepositoryManager::addManagedRepository(const QString &displayName, const QString &localPath, bool isPublic, const QString &ownerPeerId, const QString &ownerRepoAppId, const QStringList &initialGroupMembers, bool isOwner)
 {
-    // Use canonical path to avoid duplicates due to symlinks, case sensitivity, etc.
+    // Use canonical path
     QString canonicalPath = QDir(localPath).canonicalPath();
 
-    // Check if a repository with the *same local path* already exists in the managed list
+    // Check if a repository with the *same local path* already exists
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
         if (QDir(repo.localPath).canonicalPath() == canonicalPath)
@@ -48,34 +42,61 @@ bool RepositoryManager::addManagedRepository(const QString &localPath, const QSt
         }
     }
 
-    // --- New Check: Check if a repository with the *same display name* already exists ---
-    // Iterate through existing repos to see if any have this display name
-    for (const auto &repo : qAsConst(m_managedRepositories))
+    // Check if a repository with the *same owner's app ID* already exists (for clones/group members)
+    // This uniquely identifies the group from the owner's perspective.
+    if (!isOwner)
     {
-        if (repo.displayName == displayName)
+        for (const auto &repo : qAsConst(m_managedRepositories))
         {
-            qWarning() << "Repository with display name '" << displayName << "' is already managed.";
-            return false; // Already exists by display name
+            if (!repo.isOwner && repo.ownerRepoAppId == ownerRepoAppId)
+            {
+                qWarning() << "Repository with owner's App ID" << ownerRepoAppId << "is already managed (as a clone).";
+                return false; // Already exists as a clone of this specific repo group
+            }
         }
     }
-    // --- End New Check ---
+    // If isOwner is true, the ownerRepoAppId is the *new* appId being generated, so this check isn't needed.
+    // Also, we allow multiple *different* repos from the same owner with the same display name,
+    // but they will have different ownerRepoAppIds.
 
     ManagedRepositoryInfo newRepo;
-    newRepo.appId = QUuid::createUuid().toString(QUuid::WithoutBraces); // Generate unique ID
+    newRepo.appId = QUuid::createUuid().toString(QUuid::WithoutBraces); // Generate unique LOCAL ID
     newRepo.localPath = canonicalPath;
     newRepo.displayName = displayName;
-    newRepo.isPublic = isPublic;
-    newRepo.adminPeerId = adminPeerId;   // The peer ID who 'manages' this entry (owner for local, cloner for remote)
-    newRepo.originPeerId = originPeerId; // Peer ID from whom it was cloned (if any)
+    newRepo.isPublic = isPublic; // My setting for my repos, always false for clones added via clone action
+    newRepo.ownerPeerId = ownerPeerId;
+    newRepo.ownerRepoAppId = ownerRepoAppId;    // Store the owner's App ID for this repo
+    newRepo.groupMembers = initialGroupMembers; // Should contain owner + known members
+    newRepo.isOwner = isOwner;                  // Is THIS peer the owner?
 
-    // Collaborator list is initially empty unless added later by the admin.
-    // When cloning, the COLLABORATOR_ADDED message handler will update this list *after* cloning is complete.
+    // If this peer is the owner, their own appId is the ownerRepoAppId
+    if (newRepo.isOwner)
+    {
+        newRepo.ownerRepoAppId = newRepo.appId; // Set ownerRepoAppId to its own appId
+        // Ensure owner is in the groupMembers list
+        if (!newRepo.groupMembers.contains(m_myPeerId))
+        {
+            newRepo.groupMembers.append(m_myPeerId);
+        }
+    }
+    else
+    {
+        // If not owner, initial public status is false
+        newRepo.isPublic = false;
+        // The initial groupMembers might come from the clone source (COLLABORATOR_ADDED message),
+        // or just contain the owner and self initially.
+        // Ensure self is in the groupMembers list for a clone
+        if (!newRepo.groupMembers.contains(m_myPeerId))
+        {
+            newRepo.groupMembers.append(m_myPeerId);
+        }
+    }
 
-    m_managedRepositories.insert(newRepo.appId, newRepo); // Add to the map
-    qDebug() << "Added managed repository:" << newRepo.displayName << " (" << newRepo.appId << ")";
+    m_managedRepositories.insert(newRepo.appId, newRepo);
+    qDebug() << "Added managed repository:" << newRepo.displayName << " (" << newRepo.appId << ") Owner:" << newRepo.ownerPeerId << "OwnerAppId:" << newRepo.ownerRepoAppId << "IsOwner:" << newRepo.isOwner;
 
-    emit managedRepositoryListChanged(); // Notify UI and other parts of the application
-    return saveRepositoriesToFile();     // Save changes to persistent storage
+    emit managedRepositoryListChanged();
+    return saveRepositoriesToFile();
 }
 
 bool RepositoryManager::removeManagedRepository(const QString &appId)
@@ -83,56 +104,70 @@ bool RepositoryManager::removeManagedRepository(const QString &appId)
     if (m_managedRepositories.contains(appId))
     {
         QString repoName = m_managedRepositories.value(appId).displayName;
-        if (m_managedRepositories.remove(appId) > 0) // Remove from the map
+        if (m_managedRepositories.remove(appId) > 0)
         {
             qDebug() << "Removed managed repository:" << repoName << " (" << appId << ")";
-            emit managedRepositoryListChanged(); // Notify UI
-            return saveRepositoriesToFile();     // Save changes
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
         }
     }
     qWarning() << "Attempted to remove non-existent repository with App ID:" << appId;
-    return false; // Repo not found
+    return false;
 }
 
+// Set visibility (only if I am the owner)
 bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPublic)
 {
     if (m_managedRepositories.contains(appId))
     {
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId];
         // Only the owner of this managed entry can change visibility
-        // Ownership check should be done by the caller (MainWindow)
-        m_managedRepositories[appId].isPublic = isPublic;
-        qDebug() << "Set visibility for repo" << appId << "to public:" << isPublic;
-        emit managedRepositoryListChanged(); // Notify UI
-        return saveRepositoriesToFile();     // Save changes
+        if (!repo.isOwner)
+        {
+            qWarning() << "Attempted to set visibility for repo" << appId << "but local peer is not the owner.";
+            return false;
+        }
+
+        if (repo.isPublic != isPublic)
+        {
+            repo.isPublic = isPublic;
+            qDebug() << "Set visibility for owned repo" << appId << "to public:" << isPublic;
+            emit managedRepositoryListChanged(); // Notify UI
+            return saveRepositoriesToFile();     // Save changes
+        }
+        else
+        {
+            qDebug() << "Visibility for owned repo" << appId << "already set to" << isPublic;
+            return true; // No change needed
+        }
     }
     qWarning() << "Attempted to set visibility for non-existent repository with App ID:" << appId;
     return false; // Repo not found
 }
 
+// Add a peer to the groupMembers list (only if I am the owner)
 bool RepositoryManager::addCollaborator(const QString &appId, const QString &peerId)
 {
     if (m_managedRepositories.contains(appId))
     {
-        // Only the owner of this managed entry can add collaborators
-        // Ownership check should be done by the caller (MainWindow/ProjectWindow)
-        // Prevent adding duplicates
-        if (!m_managedRepositories[appId].collaborators.contains(peerId))
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId]; // Get a mutable reference
+        // Only the owner can add collaborators to their repo
+        if (!repo.isOwner)
         {
-            // Prevent adding the owner as a collaborator (they are implicitly a member)
-            if (m_managedRepositories[appId].adminPeerId == peerId)
-            {
-                qWarning() << "Attempted to add owner (" << peerId << ") as collaborator to repo" << appId;
-                return false; // Owner is already a member, cannot be added as collaborator
-            }
+            qWarning() << "Attempted to add collaborator to repo" << appId << "but local peer is not the owner.";
+            return false;
+        }
 
-            m_managedRepositories[appId].collaborators.append(peerId);
-            qDebug() << "Added collaborator" << peerId << "to repo" << appId;
-            emit managedRepositoryListChanged(); // Notify UI (ProjectWindow, RepoManagementPanel)
-            return saveRepositoriesToFile();     // Save changes
+        if (!repo.groupMembers.contains(peerId))
+        {
+            repo.groupMembers.append(peerId);
+            qDebug() << "Added collaborator" << peerId << "to repo" << appId << " (owner:" << repo.ownerPeerId << ")";
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
         }
         else
         {
-            qDebug() << "Peer" << peerId << "is already a collaborator for repo" << appId;
+            qDebug() << "Peer" << peerId << "is already a group member for repo" << appId;
             return false; // Already exists
         }
     }
@@ -140,34 +175,39 @@ bool RepositoryManager::addCollaborator(const QString &appId, const QString &pee
     return false; // Repo not found
 }
 
-// New method to remove a collaborator
+// Remove a peer from the groupMembers list (only if I am the owner)
 bool RepositoryManager::removeCollaborator(const QString &appId, const QString &peerId)
 {
     if (m_managedRepositories.contains(appId))
     {
-        // Only the owner of this managed entry can remove collaborators
-        // Ownership check should be done by the caller (MainWindow/ProjectWindow)
-        // Prevent removing the owner
-        if (m_managedRepositories[appId].adminPeerId == peerId)
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId]; // Get a mutable reference
+                                                                    // Only the owner can remove collaborators from their repo
+        if (!repo.isOwner)
         {
-            qWarning() << "Attempted to remove owner (" << peerId << ") as collaborator from repo" << appId;
-            return false; // Cannot remove owner
+            qWarning() << "Attempted to remove collaborator from repo" << appId << "but local peer is not the owner.";
+            return false;
         }
 
-        // Remove the peerId from the collaborators list
-        int countBefore = m_managedRepositories[appId].collaborators.size();
-        m_managedRepositories[appId].collaborators.removeAll(peerId); // removeAll is safe if peerId isn't in list
-        int countAfter = m_managedRepositories[appId].collaborators.size();
+        // Cannot remove the owner
+        if (repo.ownerPeerId == peerId)
+        {
+            qWarning() << "Attempted to remove owner (" << peerId << ") from group members list for repo" << appId;
+            return false;
+        }
+
+        int countBefore = repo.groupMembers.size();
+        repo.groupMembers.removeAll(peerId);
+        int countAfter = repo.groupMembers.size();
 
         if (countAfter < countBefore)
         {
             qDebug() << "Removed collaborator" << peerId << "from repo" << appId;
-            emit managedRepositoryListChanged(); // Notify UI
-            return saveRepositoriesToFile();     // Save changes
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
         }
         else
         {
-            qDebug() << "Peer" << peerId << "was not found in collaborator list for repo" << appId;
+            qDebug() << "Peer" << peerId << "was not found in group members list for repo" << appId;
             return false; // Peer was not in the list
         }
     }
@@ -175,49 +215,103 @@ bool RepositoryManager::removeCollaborator(const QString &appId, const QString &
     return false; // Repo not found
 }
 
+// Update group members list and ownerRepoAppId (used by cloner when receiving updates from owner)
+bool RepositoryManager::updateGroupMembersAndOwnerAppId(const QString &localAppId, const QString &ownerRepoAppId, const QStringList &newGroupMembers)
+{
+    if (m_managedRepositories.contains(localAppId))
+    {
+        ManagedRepositoryInfo &repo = m_managedRepositories[localAppId]; // Get a mutable reference
+        // This method is specifically for updating info on a *clone* entry
+        if (repo.isOwner)
+        {
+            qWarning() << "Attempted to update group members/owner appId on an owned repo" << localAppId << "using updateGroupMembersAndOwnerAppId method.";
+            return false;
+        }
+
+        bool changed = false;
+        if (repo.groupMembers != newGroupMembers)
+        {
+            repo.groupMembers = newGroupMembers;
+            changed = true;
+            qDebug() << "Updated group members for repo" << localAppId << " (owner:" << repo.ownerPeerId << ")";
+        }
+
+        // Update ownerRepoAppId if it's different or was empty
+        if (repo.ownerRepoAppId.isEmpty() || repo.ownerRepoAppId != ownerRepoAppId)
+        {
+            repo.ownerRepoAppId = ownerRepoAppId;
+            changed = true;
+            qDebug() << "Updated ownerRepoAppId for repo" << localAppId << "to" << ownerRepoAppId;
+        }
+
+        if (changed)
+        {
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
+        }
+        else
+        {
+            qDebug() << "Group members and ownerRepoAppId for repo" << localAppId << "are already up to date.";
+            return false; // No change needed
+        }
+    }
+    qWarning() << "Attempted to update group members/owner appId for non-existent repository with local App ID:" << localAppId;
+    return false; // Repo not found
+}
+
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfo(const QString &appId) const
 {
-    // Retrieve repository info by its unique App ID
-    return m_managedRepositories.value(appId, ManagedRepositoryInfo()); // Return empty struct if not found
+    return m_managedRepositories.value(appId, ManagedRepositoryInfo());
 }
 
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByPath(const QString &localPath) const
 {
-    // Retrieve repository info by its local file path (canonicalized)
     const QString canonicalPath = QDir(localPath).canonicalPath();
     for (const auto &repoInfo : qAsConst(m_managedRepositories))
     {
         if (QDir(repoInfo.localPath).canonicalPath() == canonicalPath)
         {
-            return repoInfo; // Found
+            return repoInfo;
         }
     }
-    return ManagedRepositoryInfo(); // Not found
+    return ManagedRepositoryInfo();
 }
 
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByDisplayName(const QString &displayName) const
 {
-    // Retrieve repository info by its display name
-    // Note: Display names might not be unique. This returns the first one found.
+    // Return the first matching entry by display name
     for (const auto &repoInfo : qAsConst(m_managedRepositories))
     {
         if (repoInfo.displayName == displayName)
         {
-            return repoInfo; // Found
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
+// New retrieval for clones based on owner and display name
+ManagedRepositoryInfo RepositoryManager::getCloneInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (!repoInfo.isOwner && repoInfo.ownerPeerId == ownerPeerId && repoInfo.displayName == displayName)
+        {
+            return repoInfo; // Found our local clone of this repo from this owner
         }
     }
     return ManagedRepositoryInfo(); // Not found
 }
 
-ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOrigin(const QString &originPeerId, const QString &displayName) const
+// Get info by the owner's App ID (useful for finding our local entry for a group)
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const
 {
-    // Retrieve repository info based on the peer it was cloned from AND its display name.
-    // Useful for finding *our local clone* of a specific repo from a specific peer.
     for (const auto &repoInfo : qAsConst(m_managedRepositories))
     {
-        if (repoInfo.originPeerId == originPeerId && repoInfo.displayName == displayName)
+        // The ownerRepoAppId is the common group identifier
+        if (repoInfo.ownerRepoAppId == ownerRepoAppId)
         {
-            return repoInfo; // Found our local clone of this repo from this origin
+            return repoInfo; // Found our local entry for this group
         }
     }
     return ManagedRepositoryInfo(); // Not found
@@ -225,42 +319,16 @@ ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOrigin(const QString
 
 QList<ManagedRepositoryInfo> RepositoryManager::getAllManagedRepositories() const
 {
-    // Return a list of all repositories currently being managed by this peer
-    return m_managedRepositories.values(); // Returns a list of all values in the map
+    return m_managedRepositories.values();
 }
 
-// Renamed and updated logic for clarity based on how it's used by NetworkManager
-QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(const QString &requestingPeer) const
+// Get repos owned by THIS peer that are publicly shareable
+QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclyShareableRepos() const
 {
-    // Return a list of repositories *owned by this peer* that are shareable with `requestingPeer`.
-    // This is used by NetworkManager to build the list of repos to announce or share with a specific peer.
-    // If requestingPeer is empty (e.g., for broadcast), only globally public repos owned by me are included.
-    // If requestingPeer is non-empty, public repos owned by me + private repos owned by me where requestingPeer is a collaborator are included.
-
     QList<ManagedRepositoryInfo> repos;
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
-        // Only consider repos that are owned by the local peer
-        if (repo.adminPeerId != m_myPeerId)
-        {
-            continue; // Cannot share repos owned by others
-        }
-
-        bool isShareableWithThisPeer = repo.isPublic; // Always shareable if public
-
-        // If the repo is NOT public AND a specific requesting peer was provided...
-        if (!repo.isPublic && !requestingPeer.isEmpty())
-        {
-            // ...AND the requesting peer is listed as a collaborator...
-            if (repo.collaborators.contains(requestingPeer))
-            {
-                isShareableWithThisPeer = true; // ...then it is shareable with THIS specific peer.
-            }
-        }
-        // Note: For broadcasts (requestingPeer is empty), private repos owned by me
-        // are only shareable if they are ALSO public (handled by the first line).
-
-        if (isShareableWithThisPeer)
+        if (repo.isOwner && repo.isPublic)
         {
             repos.append(repo);
         }
@@ -268,32 +336,28 @@ QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(
     return repos;
 }
 
-QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const QString &myPeerId) const
+// Get repos where THIS peer is the owner OR a group member
+QList<ManagedRepositoryInfo> RepositoryManager::getRepositoriesIAmMemberOf() const
 {
-    // Return a list of repositories owned by `myPeerId` that are NOT public.
-    QList<ManagedRepositoryInfo> privateRepos;
-    for (const auto &repo : qAsConst(m_managedRepositories))
-    {
-        if (!repo.isPublic && repo.adminPeerId == myPeerId)
-        {
-            privateRepos.append(repo);
-        }
-    }
-    return privateRepos;
-}
-
-QList<ManagedRepositoryInfo> RepositoryManager::getRepositoriesIAmMemberOf(const QString &myPeerId) const
-{
-    // Return a list of repositories where this peer is either the owner OR a collaborator.
-    // This defines the set of repos that appear in the RepoManagementPanel list.
     QList<ManagedRepositoryInfo> memberRepos;
     for (const auto &repo : qAsConst(m_managedRepositories))
     {
-        if (repo.adminPeerId == myPeerId || repo.collaborators.contains(myPeerId))
+        // Check if myPeerId is in the groupMembers list.
+        // Since addManagedRepository for owners ensures the owner is in the list,
+        // and updateGroupMembersAndOwnerAppId for clones ensures self is in the list,
+        // checking groupMembers.contains(m_myPeerId) is sufficient for membership.
+        if (repo.groupMembers.contains(m_myPeerId))
         {
             memberRepos.append(repo);
         }
     }
+    // Sort the list before returning
+    std::sort(memberRepos.begin(), memberRepos.end(), [](const ManagedRepositoryInfo &a, const ManagedRepositoryInfo &b)
+              {
+                  // Sort owners first, then alphabetically by display name
+                  if (a.isOwner != b.isOwner) return a.isOwner > b.isOwner;
+                  return a.displayName.compare(b.displayName, Qt::CaseInsensitive) < 0; });
+
     return memberRepos;
 }
 
@@ -337,50 +401,74 @@ bool RepositoryManager::loadRepositoriesFromFile()
 
         QJsonObject repoObject = repoValue.toObject();
         ManagedRepositoryInfo repo;
-        repo.appId = key; // Key is the App ID
+        repo.appId = key; // Key is the LOCAL App ID
+
+        // Load basic info
         repo.displayName = repoObject[JSON_KEY_DISPLAY_NAME].toString();
         repo.localPath = repoObject[JSON_KEY_LOCAL_PATH].toString();
         repo.isPublic = repoObject[JSON_KEY_IS_PUBLIC].toBool(false);
-        repo.adminPeerId = repoObject[JSON_KEY_ADMIN_PEER_ID].toString();   // Should always exist
-        repo.originPeerId = repoObject[JSON_KEY_ORIGIN_PEER_ID].toString(); // Optional
+        repo.ownerPeerId = repoObject[JSON_KEY_OWNER_PEER_ID].toString();
+        repo.ownerRepoAppId = repoObject[JSON_KEY_OWNER_REPO_APP_ID].toString(); // Load owner's App ID
 
-        QJsonValue collaboratorsValue = repoObject[JSON_KEY_COLLABORATORS];
-        if (collaboratorsValue.isArray())
+        // Determine isOwner based on loaded ownerPeerId and myPeerId
+        repo.isOwner = (repo.ownerPeerId == m_myPeerId);
+
+        // Load group members list
+        QJsonValue groupMembersValue = repoObject[JSON_KEY_GROUP_MEMBERS];
+        if (groupMembersValue.isArray())
         {
-            QJsonArray collaboratorsArray = collaboratorsValue.toArray();
-            for (const QJsonValue &v : collaboratorsArray)
+            QJsonArray groupMembersArray = groupMembersValue.toArray();
+            for (const QJsonValue &v : groupMembersArray)
             {
                 if (v.isString())
                 {
-                    repo.collaborators.append(v.toString());
+                    repo.groupMembers.append(v.toString());
                 }
                 else
                 {
-                    qWarning() << "Skipping non-string collaborator entry for repo" << key;
+                    qWarning() << "Skipping non-string group member entry for repo" << key;
                 }
             }
         }
-        else if (!collaboratorsValue.isNull() && !collaboratorsValue.isUndefined())
+        else if (!groupMembersValue.isNull() && !groupMembersValue.isUndefined())
         {
-            qWarning() << "Collaborators field is not an array for repo" << key;
-            // Treat as empty list, don't fail load
+            qWarning() << "Group members field is not an array for repo" << key;
         }
-        // If collaboratorsValue is null or undefined, repo.collaborators remains empty (correct default)
 
-        // Basic validation: must have an App ID and local path
-        if (!repo.appId.isEmpty() && !repo.localPath.isEmpty() && !repo.adminPeerId.isEmpty())
-        { // adminPeerId should also exist
+        // Basic validation: must have an App ID, local path, and ownerPeerId
+        if (!repo.appId.isEmpty() && !repo.localPath.isEmpty() && !repo.ownerPeerId.isEmpty())
+        {
+            // Ensure ownerRepoAppId is set correctly for owned repos after loading
+            if (repo.isOwner && repo.ownerRepoAppId.isEmpty())
+            {
+                repo.ownerRepoAppId = repo.appId; // Owner's App ID is their own local ID
+                qWarning() << "Corrected missing ownerRepoAppId for owned repo:" << repo.displayName << "(" << repo.appId << ")";
+            }
+            // Ensure myPeerId is in groupMembers for this repo (consistency)
+            if (!repo.groupMembers.contains(m_myPeerId))
+            {
+                repo.groupMembers.append(m_myPeerId);
+                qWarning() << "Added self to group members list for repo:" << repo.displayName << "(" << repo.appId << ")";
+            }
+
             m_managedRepositories.insert(repo.appId, repo);
             loadedCount++;
         }
         else
         {
-            qWarning() << "Skipping entry with missing appId, localPath, or adminPeerId in repo storage file for key:" << key;
+            qWarning() << "Skipping entry with missing appId, localPath, or ownerPeerId in repo storage file for key:" << key;
         }
     }
     qInfo() << "Loaded" << loadedCount << "managed repositories from" << m_storageFilePath;
-    emit managedRepositoryListChanged(); // Notify UI after loading
-    return true;                         // Load successful (even if some entries were skipped)
+    // No emit managedRepositoryListChanged() here, MainWindow will call updateUiFromBackend after construction
+
+    // Re-save if any corrections were made during loading (e.g., missing ownerRepoAppId or self in groupMembers)
+    if (loadedCount != json.size())
+    {                             // Simple check if some entries were skipped/invalid
+        saveRepositoriesToFile(); // Save valid entries
+    }
+
+    return true;
 }
 
 bool RepositoryManager::saveRepositoriesToFile() const
@@ -396,7 +484,6 @@ bool RepositoryManager::saveRepositoriesToFile() const
     }
 
     QFile saveFile(m_storageFilePath);
-    // Use WriteOnly, Text, and Truncate to overwrite the file
     if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
     {
         qWarning() << "Couldn't open repository storage file for writing:" << m_storageFilePath << saveFile.errorString();
@@ -410,14 +497,16 @@ bool RepositoryManager::saveRepositoriesToFile() const
         repoObject[JSON_KEY_DISPLAY_NAME] = repo.displayName;
         repoObject[JSON_KEY_LOCAL_PATH] = repo.localPath;
         repoObject[JSON_KEY_IS_PUBLIC] = repo.isPublic;
-        repoObject[JSON_KEY_ADMIN_PEER_ID] = repo.adminPeerId;
-        repoObject[JSON_KEY_ORIGIN_PEER_ID] = repo.originPeerId;
-        repoObject[JSON_KEY_COLLABORATORS] = QJsonArray::fromStringList(repo.collaborators); // Save collaborators as JSON array of strings
-        json[repo.appId] = repoObject;                                                       // Use App ID as the key in the JSON object
+        repoObject[JSON_KEY_OWNER_PEER_ID] = repo.ownerPeerId;
+        repoObject[JSON_KEY_OWNER_REPO_APP_ID] = repo.ownerRepoAppId; // Save owner's App ID
+        repoObject[JSON_KEY_GROUP_MEMBERS] = QJsonArray::fromStringList(repo.groupMembers);
+        repoObject[JSON_KEY_IS_OWNER_FLAG] = repo.isOwner; // Explicitly save flag for clarity/validation
+
+        json[repo.appId] = repoObject; // Use LOCAL App ID as the key in the JSON object
     }
 
     QJsonDocument saveDoc(json);
-    qint64 bytesWritten = saveFile.write(saveDoc.toJson(QJsonDocument::Indented)); // Use Indented for readability
+    qint64 bytesWritten = saveFile.write(saveDoc.toJson(QJsonDocument::Indented));
     saveFile.close();
 
     if (bytesWritten == -1)

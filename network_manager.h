@@ -11,13 +11,14 @@
 #include <QMap>
 #include <QMetaType>
 #include <QVariantMap>
-#include <QFile> // Added
+#include <QFile>
 #include <QSet>
-#include <QElapsedTimer> // Added
-#include "identity_manager.h"
+#include <QElapsedTimer>
+#include "identity_manager.h" // IdentityManager class declaration
 
 class RepositoryManager; // Forward declaration
 
+// Struct to track discovered peer information
 struct DiscoveredPeerInfo
 {
     QString id;
@@ -65,7 +66,6 @@ struct OutgoingFileTransfer
     QString bundleFilePath; // Path to the source bundle file (for cleanup)
     qint64 totalSize = 0;
     qint64 bytesSent = 0; // Bytes sent *of the file data* (after initial header)
-    // Optional: QElapsedTimer timer;
 
     // Destructor to ensure the file is deleted if the struct is deleted early
     ~OutgoingFileTransfer()
@@ -101,7 +101,7 @@ public:
     void stopUdpDiscovery();
     void sendDiscoveryBroadcast();
     void broadcastTcpMessage(const QString &message);
-    void sendGroupChatMessage(const QString &repoAppId, const QString &message);
+    void sendGroupChatMessage(const QString &ownerRepoAppId, const QString &message);
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
@@ -110,25 +110,26 @@ public:
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
     QList<QString> getConnectedPeerIds() const;
     bool isConnectionPending(QTcpSocket *socket) const;
-    void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
-    QString getMyUsername() const { return m_myUsername; } // New getter
+    void addSharedRepoToPeer(const QString &peerId, const QString &repoName); // repoName here is DisplayName
+    QString getMyUsername() const { return m_myUsername; }
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
     void newTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex);
     void tcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername);
     void broadcastMessageReceived(QTcpSocket *peerSocket, const QString &peerUsername, const QString &message);
-    void groupMessageReceived(const QString &peerUsername, const QString &repoAppId, const QString &message);
+    void groupMessageReceived(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message);
     void tcpServerStatusChanged(bool listening, quint16 port, const QString &error = "");
     void tcpConnectionStatusChanged(const QString &peerUsername, const QString &peerPublicKeyHex, bool connected, const QString &error = "");
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
     void lanPeerLost(const QString &peerUsername);
     void repoBundleRequestedByPeer(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
-    void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);                                   // Emitted by receiving peer
-    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);                          // Emitted by receiving peer
-    void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message); // Emitted by receiving peer
-    void repoBundleSent(const QString &repoName, const QString &recipientUsername);                                          // Emitted by sending peer
+    void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);
+    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
+    void repoBundleCompleted(const QString &repoDisplayName, const QString &localBundlePath, bool success, const QString &message);
+    void repoBundleSent(const QString &repoName, const QString &recipientUsername);
     void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
+    void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
 
 private slots:
     void onNewTcpConnection();
@@ -140,40 +141,32 @@ private slots:
     void onPeerCleanupTimerTimeout();
 
 private:
-    // Removed struct definitions from here, moved above
-
-    QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers; // Map socket to incoming transfer
-    QMap<QTcpSocket *, OutgoingFileTransfer *> m_outgoingTransfers; // Map socket to outgoing transfer
-
-    QMap<QTcpSocket *, QByteArray> m_socketBuffers; // Buffer for incoming data
-    QSet<QTcpSocket *> m_handshakeSent;             // Keep track of sockets where we sent our identity
-
+    QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
+    QMap<QTcpSocket *, OutgoingFileTransfer *> m_outgoingTransfers;
+    QMap<QTcpSocket *, QByteArray> m_socketBuffers;
+    QSet<QTcpSocket *> m_handshakeSent;
     QTcpServer *m_tcpServer;
-    QList<QTcpSocket *> m_allTcpSockets;                   // List of all active sockets
-    QMap<QTcpSocket *, QString> m_socketToPeerUsernameMap; // Map socket to peer ID (can be temporary/pending)
-    QMap<QTcpSocket *, QTimer *> m_pendingConnections;     // Map pending incoming sockets to handshake timers
-
+    QList<QTcpSocket *> m_allTcpSockets;
+    QMap<QTcpSocket *, QString> m_socketToPeerUsernameMap;
+    QMap<QTcpSocket *, QTimer *> m_pendingConnections;
     QString m_myUsername;
-    IdentityManager *m_identityManager;         // Not owned
-    RepositoryManager *m_repoManager_ptr;       // Not owned
-    QMap<QString, QByteArray> m_peerPublicKeys; // Map peer ID to their public key bytes (for encryption)
-
+    IdentityManager *m_identityManager;
+    RepositoryManager *m_repoManager_ptr;
+    QMap<QString, QByteArray> m_peerPublicKeys;
     QUdpSocket *m_udpSocket;
-    quint16 m_udpDiscoveryPort = 45454;                  // Default UDP port
-    QTimer *m_broadcastTimer;                            // Timer for sending UDP broadcasts
-    QTimer *m_peerCleanupTimer;                          // Timer for cleaning up old discovered peers
-    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers; // Map peer ID to discovery info
+    quint16 m_udpDiscoveryPort = 45454;
+    QTimer *m_broadcastTimer;
+    QTimer *m_peerCleanupTimer;
+    QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
 
-    QString getPeerDisplayString(QTcpSocket *socket);                                                     // Helper for logging socket info
-    void processIncomingTcpData(QTcpSocket *socket);                                                      // Processes data from the socket buffer
-    void sendIdentityOverTcp(QTcpSocket *socket);                                                         // Sends our identity handshake message
-    QString findUsernameForAddress(const QHostAddress &address);                                          // Tries to find a known username for an IP address
-    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args); // Generic message sender
-    void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);   // Handles incoming bundle request message
-    void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);                       // Handles decrypted secure messages
-
-    // Helper for cleaning up failed outgoing transfers
+    QString getPeerDisplayString(QTcpSocket *socket);
+    void processIncomingTcpData(QTcpSocket *socket);
+    void sendIdentityOverTcp(QTcpSocket *socket);
+    QString findUsernameForAddress(const QHostAddress &address);
+    void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args);
+    void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);
     void handleOutgoingTransferError(QTcpSocket *socket, const QString &message);
+    bool extractGroupInfoFromPayload(const QVariantMap &payload, QString &ownerRepoAppId, QString &repoDisplayName, QString &ownerPeerId, QStringList &groupMembers);
 };
 
 #endif // NETWORK_MANAGER_H

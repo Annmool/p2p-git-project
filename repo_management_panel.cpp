@@ -100,17 +100,15 @@ void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &rep
                                    .arg(repoInfo.displayName.toHtmlEscaped())
                                    .arg(repoInfo.isPublic ? "Public" : "Private");
 
-            bool isOwnedByMe = (repoInfo.adminPeerId == myPeerId);
+            bool isOwnedByMe = (repoInfo.ownerPeerId == myPeerId);
 
             if (!isOwnedByMe) // If not owned by me, show the owner
             {
-                itemText += QString("<br><small><i>Owner: %1</i></small>").arg(repoInfo.adminPeerId.toHtmlEscaped());
-                if (!repoInfo.originPeerId.isEmpty())
-                {
-                    itemText += QString("<br><small><i>Cloned from: %1</i></small>").arg(repoInfo.originPeerId.toHtmlEscaped());
-                }
+                itemText += QString("<br><small><i>Owner: %1</i></small>").arg(repoInfo.ownerPeerId.toHtmlEscaped());
+                // For clones, indicate it's a clone using ownerRepoAppId or ownerPeerId
+                itemText += QString("<br><small><i>Cloned from: %1</i></small>").arg(repoInfo.ownerPeerId.toHtmlEscaped());
                 // Show if I'm a collaborator but not owner (only relevant for private repos)
-                if (!repoInfo.isPublic && repoInfo.collaborators.contains(myPeerId))
+                if (!repoInfo.isPublic && repoInfo.groupMembers.contains(myPeerId))
                 {
                     itemText += QString("<br><small><i>Role: Collaborator</i></small>");
                 }
@@ -119,10 +117,12 @@ void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &rep
             {
                 // If owned by me
                 itemText += QString("<br><small><i>Owner: You</i></small>");
-                // Show collaborators count if any
-                if (!repoInfo.collaborators.isEmpty())
+                // Show collaborators count (excluding the owner)
+                QStringList collaborators = repoInfo.groupMembers;
+                collaborators.removeAll(myPeerId); // Exclude the owner from collaborator count
+                if (!collaborators.isEmpty())
                 {
-                    itemText += QString("<br><small><i>%1 Collaborator(s)</i></small>").arg(repoInfo.collaborators.size());
+                    itemText += QString("<br><small><i>%1 Collaborator(s)</i></small>").arg(collaborators.size());
                 }
                 else if (!repoInfo.isPublic)
                 {
@@ -154,7 +154,6 @@ void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &rep
     // Update button states after the list is refreshed and selection is potentially restored
     onRepoSelectionChanged();
 }
-
 void RepoManagementPanel::onRepoSelectionChanged()
 {
     // This slot updates button enabled states based on whether an item is selected.

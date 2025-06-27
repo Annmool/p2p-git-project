@@ -5,6 +5,7 @@
 #include "git_backend.h"
 #include "repository_manager.h" // For ManagedRepositoryInfo
 #include "network_manager.h"    // For access to connected peers and username
+#include <QMetaType>            // Needed for Q_DECLARE_METATYPE
 
 QT_BEGIN_NAMESPACE
 class QTextEdit;
@@ -25,23 +26,24 @@ class ProjectWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    // Constructor is updated to take pointers to the managers and the repo's unique ID
+    // Constructor is updated to take pointers to the managers and the repo's unique LOCAL ID
     explicit ProjectWindow(const QString &appId, RepositoryManager *repoManager, NetworkManager *networkManager, QWidget *parent = nullptr);
     ~ProjectWindow(); // Destructor handles m_gitBackend automatically
 
     QString getAppId() const { return m_appId; }
     void updateGroupMembers(); // Public method to refresh the member list status icons
-    void updateStatus();       // Public method to refresh repo status (branch, path, visibility)
+    void updateStatus();       // Public method to refresh repo status (branch, path, visibility, ownership)
 
 public slots:
-    void displayGroupMessage(const QString &peerId, const QString &message);
+    void displayGroupMessage(const QString &peerId, const QString &message); // Display message in chat log
 
 signals:
     // Signal to send a message from this window's chat
-    void groupMessageSent(const QString &appId, const QString &message);
+    // Pass ownerRepoAppId (the common group identifier) and message
+    void groupMessageSent(const QString &ownerRepoAppId, const QString &message);
     // Signals to request collaborator management actions (handled by MainWindow)
-    void addCollaboratorRequested(const QString &appId);                                   // Emitted when Add button clicked
-    void removeCollaboratorRequested(const QString &appId, const QString &peerIdToRemove); // Emitted when Remove button clicked after confirmation
+    void addCollaboratorRequested(const QString &localAppId);                                   // Emitted when Add button clicked
+    void removeCollaboratorRequested(const QString &localAppId, const QString &peerIdToRemove); // Emitted when Remove button clicked after confirmation
 
 private slots:
     // History tab slots
@@ -54,7 +56,7 @@ private slots:
     void onSendGroupMessageClicked();     // Handle sending group chat message
     void onAddCollaboratorClicked();      // Handle "Add Collaborator" button click
     void onRemoveCollaboratorClicked();   // Handle "Remove Collaborator" button click
-    void onGroupMemberSelectionChanged(); // Handle selection change in the members list
+    void onGroupMemberSelectionChanged(); // Handle selection change in the members list widget
 
 private:
     void setupUi();
@@ -63,10 +65,10 @@ private:
 
     // Backend and identity info (pointers owned by MainWindow)
     GitBackend m_gitBackend;          // Git backend instance for THIS repository
-    QString m_appId;                  // Unique application ID for this repository entry
-    ManagedRepositoryInfo m_repoInfo; // Cache of the repository info (updated by updateStatus)
-    RepositoryManager *m_repoManager; // Pointer to the main repository manager
-    NetworkManager *m_networkManager; // Pointer to the main network manager
+    QString m_appId;                  // Unique LOCAL application ID for this repository entry
+    ManagedRepositoryInfo m_repoInfo; // Cache of the repository info (updated by updateStatus/updateGroupMembers)
+    RepositoryManager *m_repoManager; // Pointer to the main repository manager (NOT owned)
+    NetworkManager *m_networkManager; // Pointer to the main network manager (NOT owned)
 
     // Main UI
     QTabWidget *m_tabWidget;
