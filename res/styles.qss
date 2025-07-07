@@ -1,0 +1,95 @@
+/* Main Colors from Figma Design */
+:root {
+    --primary-color: #2D5F5D;
+    --background-color: #FFFFFF;
+    --secondary-background-color: #F8F9FA;
+    --text-color: #212529;
+    --secondary-text-color: #6c757d;
+    --border-color: #dee2e6;
+    --accent-color: #4A90E2; /* A generic blue for accents */
+}
+
+/* Global Styles */
+QMainWindow, QDialog {
+    background-color: var(--background-color);
+}
+
+QWidget {
+    font-family: "Segoe UI", "Cantarell", "sans-serif";
+    color: var(--text-color);
+}
+
+/* === Left Navigation Panel === */
+#navigationPanel {
+    background-color: var(--primary-color);
+    border-right: 1px solid var(--border-color);
+}
+
+#navigationPanel QToolButton {
+    color: #FFFFFF;
+    background-color: transparent;
+    border: none;
+    padding: 12px;
+    text-align: left;
+    font-size: 14px;
+    border-radius: 5px;
+    margin: 4px 8px; /* Top/Bottom, Left/Right */
+}
+
+#navigationPanel QToolButton:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#navigationPanel QToolButton:checked {
+    background-color: rgba(255, 255, 255, 0.2);
+    font-weight: bold;
+}
+
+/* === Main Content Area === */
+#mainContentPanel {
+    background-color: var(--secondary-background-color);
+    padding: 20px;
+}
+
+/* Generic Headers */
+QLabel[heading="1"] {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--text-color);
+}
+QLabel[heading="2"] {
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 15px;
+    color: var(--text-color);
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    padding: 8px 16px;
+    border-radius: 5px;
+    font-size: 14px;
+}
+QPushButton:hover {
+    background-color: #e0e0e0;
+}
+
+/* Primary Action Button Style */
+QPushButton#primaryButton {
+    background-color: var(--primary-color);
+    color: #FFFFFF;
+    border: none;
+    font-weight: bold;
+}
+QPushButton#primaryButton:hover {
+    background-color: #38706E;
+}
+
+/* Card Style */
+QFrame#card {
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}

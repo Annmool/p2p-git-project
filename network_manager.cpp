@@ -11,10 +11,18 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <sodium.h>
+<<<<<<< Updated upstream
+=======
+#include <QFileInfo>
+#include <QDir>
+#include <QElapsedTimer>
+#include <functional>
+>>>>>>> Stashed changes
 
 const qint64 PEER_TIMEOUT_MS = 15000;
 const int BROADCAST_INTERVAL_MS = 5000;
 const int PENDING_CONNECTION_TIMEOUT_MS = 30000;
+<<<<<<< Updated upstream
 
 NetworkManager::NetworkManager(const QString &myUsername,
                                IdentityManager *identityManager,
@@ -25,6 +33,16 @@ NetworkManager::NetworkManager(const QString &myUsername,
       m_identityManager(identityManager),
       m_repoManager_ptr(repoManager)
 {
+=======
+const int FILE_TRANSFER_CHUNK_SIZE = 65536;
+
+NetworkManager::NetworkManager(const QString &myUsername, IdentityManager *identityManager, RepositoryManager *repoManager, QObject *parent)
+    : QObject(parent), m_myUsername(myUsername), m_identityManager(identityManager), m_repoManager_ptr(repoManager)
+{
+    if (!m_identityManager || !m_repoManager_ptr) { qCritical() << "NetworkManager initialized without valid IdentityManager or RepositoryManager!"; }
+    if (sodium_init() == -1) { qCritical() << "NetworkManager: CRITICAL - libsodium could not be initialized!"; }
+
+>>>>>>> Stashed changes
     m_tcpServer = new QTcpServer(this);
     connect(m_tcpServer, &QTcpServer::newConnection, this, &NetworkManager::onNewTcpConnection);
     m_udpSocket = new QUdpSocket(this);
@@ -42,16 +60,28 @@ NetworkManager::~NetworkManager()
     stopUdpDiscovery();
     disconnectAllTcpPeers();
     qDeleteAll(m_incomingTransfers);
+<<<<<<< Updated upstream
+=======
+    m_incomingTransfers.clear();
+    qDeleteAll(m_outgoingTransfers);
+    m_outgoingTransfers.clear();
+    qDeleteAll(m_pendingConnections);
+    m_pendingConnections.clear();
+>>>>>>> Stashed changes
 }
 
 void NetworkManager::onNewTcpConnection()
 {
-    while (m_tcpServer->hasPendingConnections())
-    {
+    while (m_tcpServer->hasPendingConnections()) {
         QTcpSocket *socket = m_tcpServer->nextPendingConnection();
+<<<<<<< Updated upstream
         if (socket)
         {
             qDebug() << "Incoming connection from" << socket->peerAddress().toString();
+=======
+        if (socket) {
+            qDebug() << "Incoming connection from" << socket->peerAddress().toString() << ":" << socket->peerPort();
+>>>>>>> Stashed changes
             connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
             connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
             connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
@@ -62,6 +92,22 @@ void NetworkManager::onNewTcpConnection()
             connect(m_pendingConnections[socket], &QTimer::timeout, this, [this, socket](){ rejectPendingTcpConnection(socket); });
             m_pendingConnections[socket]->start(PENDING_CONNECTION_TIMEOUT_MS);
 
+<<<<<<< Updated upstream
+=======
+            m_allTcpSockets.append(socket);
+            m_socketToPeerUsernameMap.insert(socket, "AwaitingID:" + socket->peerAddress().toString() + ":" + QString::number(socket->peerPort()));
+
+            QTimer *timer = new QTimer(socket);
+            timer->setSingleShot(true);
+            connect(timer, &QTimer::timeout, this, [this, socket]() {
+                qWarning() << "Handshake timeout for incoming connection from" << getPeerDisplayString(socket);
+                rejectPendingTcpConnection(socket);
+            });
+            m_pendingConnections.insert(socket, timer);
+            timer->start(PENDING_CONNECTION_TIMEOUT_MS);
+
+            sendIdentityOverTcp(socket);
+>>>>>>> Stashed changes
             QString discoveredUsername = findUsernameForAddress(socket->peerAddress());
             emit incomingTcpConnectionRequest(socket, socket->peerAddress(), socket->peerPort(), discoveredUsername);
         }
@@ -71,6 +117,7 @@ void NetworkManager::onNewTcpConnection()
 void NetworkManager::onTcpSocketReadyRead()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket *>(sender());
+<<<<<<< Updated upstream
     if (!socket) return;
 
     m_socketBuffers[socket].append(socket->readAll());
@@ -80,11 +127,15 @@ void NetworkManager::onTcpSocketReadyRead()
         return;
     }
     
+=======
+    if (!socket) { qWarning() << "onTcpSocketReadyRead called with invalid sender."; return; }
+>>>>>>> Stashed changes
     processIncomingTcpData(socket);
 }
 
 void NetworkManager::acceptPendingTcpConnection(QTcpSocket *pendingSocket)
 {
+<<<<<<< Updated upstream
     if (m_pendingConnections.contains(pendingSocket))
     {
         qDebug() << "User accepted connection from" << pendingSocket->peerAddress().toString();
@@ -94,21 +145,82 @@ void NetworkManager::acceptPendingTcpConnection(QTcpSocket *pendingSocket)
 
         sendIdentityOverTcp(pendingSocket);
 
+=======
+    if (m_pendingConnections.contains(pendingSocket)) {
+        qDebug() << "Accepting pending connection from" << getPeerDisplayString(pendingSocket);
+        QTimer *timer = m_pendingConnections.take(pendingSocket);
+        if (timer) timer->deleteLater();
+        if (!m_handshakeSent.contains(pendingSocket)) { sendIdentityOverTcp(pendingSocket); }
+>>>>>>> Stashed changes
         if (m_socketBuffers.contains(pendingSocket) && !m_socketBuffers[pendingSocket].isEmpty()) {
             qDebug() << "Processing buffered data for newly accepted connection.";
             processIncomingTcpData(pendingSocket);
         }
+<<<<<<< Updated upstream
     }
+=======
+    } else {
+        qWarning() << "Attempted to accept a connection that was not pending:" << getPeerDisplayString(pendingSocket);
+    }
+}
+
+void NetworkManager::rejectPendingTcpConnection(QTcpSocket *pendingSocket)
+{
+    if (m_pendingConnections.contains(pendingSocket)) {
+        qDebug() << "Rejecting pending connection from" << getPeerDisplayString(pendingSocket);
+        QTimer *timer = m_pendingConnections.take(pendingSocket);
+        if (timer) timer->deleteLater();
+        pendingSocket->disconnectFromHost();
+    } else {
+        qWarning() << "Attempted to reject a connection that was not pending:" << getPeerDisplayString(pendingSocket);
+    }
+}
+
+bool NetworkManager::extractGroupInfoFromPayload(const QVariantMap &payload, QString &ownerRepoAppId, QString &repoDisplayName, QString &ownerPeerId, QStringList &groupMembers)
+{
+    ownerRepoAppId = payload.value("ownerRepoAppId").toString();
+    repoDisplayName = payload.value("repoDisplayName").toString();
+    ownerPeerId = payload.value("ownerPeerId").toString();
+    groupMembers = payload.value("groupMembers").toStringList();
+    return !ownerRepoAppId.isEmpty() && !repoDisplayName.isEmpty() && !ownerPeerId.isEmpty() && !groupMembers.isEmpty();
+>>>>>>> Stashed changes
 }
 
 void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVariantMap &payload)
 {
     QString messageType = payload.value("__messageType").toString();
+<<<<<<< Updated upstream
     if (messageType.isEmpty()) return;
 
     qDebug() << "Handling encrypted payload of type" << messageType << "from" << peerId;
 
     if (messageType == "SHARE_PRIVATE_REPO") {
+=======
+    if (messageType.isEmpty()) {
+        qWarning() << "Received encrypted payload with no messageType from" << peerId;
+        return;
+    }
+
+    qDebug() << "Handling encrypted payload of type" << messageType << "from" << peerId;
+
+    if (messageType == "COLLABORATOR_ADDED") {
+        QString ownerRepoAppId, repoDisplayName, ownerPeerId;
+        QStringList groupMembers;
+        if (extractGroupInfoFromPayload(payload, ownerRepoAppId, repoDisplayName, ownerPeerId, groupMembers)) {
+            emit collaboratorAddedReceived(peerId, ownerRepoAppId, repoDisplayName, ownerPeerId, groupMembers);
+        } else {
+            qWarning() << "NetworkManager: Invalid COLLABORATOR_ADDED payload from" << peerId;
+        }
+    } else if (messageType == "COLLABORATOR_REMOVED") {
+        QString ownerRepoAppId = payload.value("ownerRepoAppId").toString();
+        QString repoDisplayName = payload.value("repoDisplayName").toString();
+        if (!ownerRepoAppId.isEmpty() && !repoDisplayName.isEmpty()) {
+            emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
+        } else {
+            qWarning() << "NetworkManager: Invalid COLLABORATOR_REMOVED payload from" << peerId;
+        }
+    } else {
+>>>>>>> Stashed changes
         emit secureMessageReceived(peerId, messageType, payload);
     } else if (messageType == "COLLABORATOR_ADDED") {
         QString appId = payload.value("appId").toString();
@@ -127,6 +239,7 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         }
     }
 }
+
 
 void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
 {
@@ -663,10 +776,25 @@ void NetworkManager::addSharedRepoToPeer(const QString &peerId, const QString &r
 {
     if (m_discoveredPeers.contains(peerId))
     {
+<<<<<<< Updated upstream
         if (!m_discoveredPeers[peerId].publicRepoNames.contains(repoName))
         {
             m_discoveredPeers[peerId].publicRepoNames.append(repoName);
             emit lanPeerDiscoveredOrUpdated(m_discoveredPeers.value(peerId));
+=======
+        // Get a mutable copy
+        DiscoveredPeerInfo info = m_discoveredPeers[peerId];
+        
+        if (!info.publicRepoNames.contains(repoName))
+        {
+            info.publicRepoNames.append(repoName);
+            // Put the modified copy back into the map
+            m_discoveredPeers[peerId] = info;
+            
+            qDebug() << "Updated peer" << peerId << "with new shared repo:" << repoName;
+            // This signal is essential for the UI to redraw the peer list.
+            emit lanPeerDiscoveredOrUpdated(info);
+>>>>>>> Stashed changes
         }
     }
 }
