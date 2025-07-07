@@ -22,7 +22,8 @@ public:
     void logStatus(const QString &message, bool isError = false);
 
 public slots:
-    void updateRepoList(const QList<ManagedRepositoryInfo> &repos);
+    // FIX: Add the second parameter to match the function call
+    void updateRepoList(const QList<ManagedRepositoryInfo> &repos, const QString &myPeerId);
 
 signals:
     void addRepoClicked();

@@ -59,24 +59,25 @@ public:
     QList<QString> getConnectedPeerIds() const;
     bool isConnectionPending(QTcpSocket *socket) const;
     void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
-    QString getMyUsername() const { return m_myUsername; } // New getter
+    QString getMyUsername() const { return m_myUsername; }
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
     void newTcpPeerConnected(QTcpSocket *peerSocket, const QString &peerUsername, const QString &peerPublicKeyHex);
     void tcpPeerDisconnected(QTcpSocket *peerSocket, const QString &peerUsername);
     void broadcastMessageReceived(QTcpSocket *peerSocket, const QString &peerUsername, const QString &message);
-    void groupMessageReceived(const QString &peerUsername, const QString &repoAppId, const QString &message);
+    void groupMessageReceived(const QString &senderPeerId, const QString &repoAppId, const QString &message);
     void tcpServerStatusChanged(bool listening, quint16 port, const QString &error = "");
     void tcpConnectionStatusChanged(const QString &peerUsername, const QString &peerPublicKeyHex, bool connected, const QString &error = "");
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
     void lanPeerLost(const QString &peerUsername);
     void repoBundleRequestedByPeer(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
-    void repoBundleTransferStarted(const QString &repoName, const QString &tempLocalPath);
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
     void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void repoBundleSent(const QString &repoName, const QString &recipientUsername);
     void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
+    void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
+    void collaboratorRemovedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
 
 private slots:
     void onNewTcpConnection();
@@ -98,10 +99,10 @@ private:
         qint64 totalSize = 0;
         qint64 bytesReceived = 0;
     };
+
     QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
     QMap<QTcpSocket *, QByteArray> m_socketBuffers;
     QSet<QTcpSocket *> m_handshakeSent;
-
     QTcpServer *m_tcpServer;
     QList<QTcpSocket *> m_allTcpSockets;
     QMap<QTcpSocket *, QString> m_socketToPeerUsernameMap;
@@ -123,7 +124,6 @@ private:
     void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args);
     void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
     void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);
-
 };
 
 #endif // NETWORK_MANAGER_H

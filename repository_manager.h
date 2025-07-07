@@ -7,6 +7,7 @@
 #include <QMap>
 #include <QUuid>
 #include <QMetaType>
+#include <QStringList>
 
 struct ManagedRepositoryInfo
 {
@@ -14,33 +15,43 @@ struct ManagedRepositoryInfo
     QString displayName;
     QString localPath;
     bool isPublic;
-    QString adminPeerId;
-    QStringList collaborators;
-    QString originPeerId;
-    ManagedRepositoryInfo() : isPublic(false) {}
+    QString ownerPeerId;
+    QString ownerRepoAppId;
+    QStringList groupMembers;
+    bool isOwner;
+
+    ManagedRepositoryInfo() : isPublic(false), isOwner(false) {}
+    bool isValid() const { return !appId.isEmpty() && !localPath.isEmpty() && !ownerPeerId.isEmpty(); }
+
+    bool operator==(const ManagedRepositoryInfo &other) const {
+        return appId == other.appId;
+    }
 };
 Q_DECLARE_METATYPE(ManagedRepositoryInfo)
+Q_DECLARE_METATYPE(QList<ManagedRepositoryInfo>)
 
 class RepositoryManager : public QObject
 {
     Q_OBJECT
 public:
-    explicit RepositoryManager(const QString &storageFilePath, QObject *parent = nullptr);
+    explicit RepositoryManager(const QString &storageFilePath, const QString &myPeerId, QObject *parent = nullptr);
     ~RepositoryManager();
 
-    bool addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId = "");
+    bool addManagedRepository(const QString &displayName, const QString &localPath, bool isPublic, const QString &ownerPeerId, const QString &ownerRepoAppId, const QStringList &initialGroupMembers, bool isOwner);
     bool removeManagedRepository(const QString &appId);
     bool setRepositoryVisibility(const QString &appId, bool isPublic);
     bool addCollaborator(const QString &appId, const QString &peerId);
-    ManagedRepositoryInfo getRepositoryInfoByOrigin(const QString &originPeerId, const QString &displayName) const;
+    bool removeCollaborator(const QString &appId, const QString &peerId);
+    bool updateGroupMembersAndOwnerAppId(const QString &localAppId, const QString &ownerRepoAppId, const QStringList &newGroupMembers);
 
     ManagedRepositoryInfo getRepositoryInfo(const QString &appId) const;
     ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
     ManagedRepositoryInfo getRepositoryInfoByDisplayName(const QString &displayName) const;
-    QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
-    QList<ManagedRepositoryInfo> getMyPubliclySharedRepositories(const QString &requestingPeer) const;
-    QList<ManagedRepositoryInfo> getMyPrivateRepositories(const QString &myPeerId) const;
-    QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf(const QString &myPeerId) const;
+    ManagedRepositoryInfo getCloneInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const;
+    ManagedRepositoryInfo getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const;
+
+    QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf() const;
+    QList<ManagedRepositoryInfo> getMyPubliclyShareableRepos() const;
 
 signals:
     void managedRepositoryListChanged();
@@ -51,5 +62,7 @@ private:
 
     QString m_storageFilePath;
     QMap<QString, ManagedRepositoryInfo> m_managedRepositories;
+    QString m_myPeerId;
 };
+
 #endif // REPOSITORY_MANAGER_H

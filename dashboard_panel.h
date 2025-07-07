@@ -4,6 +4,7 @@
 #include <QWidget>
 #include "repository_manager.h" // For ManagedRepositoryInfo
 
+// Forward declarations for Qt classes
 QT_BEGIN_NAMESPACE
 class QListWidget;
 class QPushButton;
@@ -14,7 +15,8 @@ QT_END_NAMESPACE
 
 class DashboardPanel : public QWidget
 {
-    Q_OBJECT
+    Q_OBJECT // This macro is essential for signals and slots
+
 public:
     explicit DashboardPanel(QWidget *parent = nullptr);
 

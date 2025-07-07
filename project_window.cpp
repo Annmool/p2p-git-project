@@ -9,6 +9,9 @@
 #include <QTabWidget>
 #include <QListWidget>
 #include <QLineEdit>
+#include <QStyle>
+#include <QInputDialog>
+#include <QTimer>
 
 ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManager, NetworkManager* networkManager, QWidget *parent)
     : QMainWindow(parent),
@@ -17,6 +20,11 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManage
       m_networkManager(networkManager)
 {
     m_repoInfo = m_repoManager->getRepositoryInfo(m_appId);
+    if (!m_repoInfo.isValid()) {
+        QMessageBox::critical(this, "Error", "Could not find repository information for ID: " + appId);
+        QTimer::singleShot(0, this, &QWidget::close);
+        return;
+    }
 
     setupUi();
 
@@ -29,6 +37,12 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManage
     }
     updateStatus();
     updateGroupMembers();
+
+    connect(m_groupChatSendButton, &QPushButton::clicked, this, &ProjectWindow::onSendGroupMessageClicked);
+    connect(m_groupChatInput, &QLineEdit::returnPressed, this, &ProjectWindow::onSendGroupMessageClicked);
+    connect(m_addCollaboratorButton, &QPushButton::clicked, this, &ProjectWindow::onAddCollaboratorClicked);
+    connect(m_removeCollaboratorButton, &QPushButton::clicked, this, &ProjectWindow::onRemoveCollaboratorClicked);
+    connect(m_groupMembersList, &QListWidget::currentItemChanged, this, &ProjectWindow::onGroupMemberSelectionChanged);
 }
 
 ProjectWindow::~ProjectWindow() {}
@@ -43,7 +57,6 @@ void ProjectWindow::setupUi()
     m_tabWidget = new QTabWidget(this);
     mainLayout->addWidget(m_tabWidget);
 
-    // --- History Tab ---
     m_historyTab = new QWidget();
     QVBoxLayout *historyLayout = new QVBoxLayout(m_historyTab);
     
@@ -71,7 +84,6 @@ void ProjectWindow::setupUi()
     connect(m_checkoutButton, &QPushButton::clicked, this, &ProjectWindow::checkoutBranch);
     connect(m_branchComboBox, &QComboBox::currentTextChanged, this, &ProjectWindow::viewRemoteBranchHistory);
 
-    // --- Collaboration Tab ---
     m_collabTab = new QWidget();
     QVBoxLayout *collabLayout = new QVBoxLayout(m_collabTab);
 
@@ -79,6 +91,13 @@ void ProjectWindow::setupUi()
     m_groupMembersList = new QListWidget();
     m_groupMembersList->setMaximumHeight(120);
     collabLayout->addWidget(m_groupMembersList);
+    
+    QHBoxLayout *collabButtonLayout = new QHBoxLayout();
+    m_addCollaboratorButton = new QPushButton("Add Collaborator...", this);
+    m_removeCollaboratorButton = new QPushButton("Remove Collaborator", this);
+    collabButtonLayout->addWidget(m_addCollaboratorButton);
+    collabButtonLayout->addWidget(m_removeCollaboratorButton);
+    collabLayout->addLayout(collabButtonLayout);
 
     collabLayout->addWidget(new QLabel("<b>Group Chat:</b>"));
     m_groupChatDisplay = new QTextEdit();
@@ -93,10 +112,6 @@ void ProjectWindow::setupUi()
     chatInputLayout->addWidget(m_groupChatSendButton);
     collabLayout->addLayout(chatInputLayout);
 
-    connect(m_groupChatSendButton, &QPushButton::clicked, this, &ProjectWindow::onSendGroupMessageClicked);
-    connect(m_groupChatInput, &QLineEdit::returnPressed, this, &ProjectWindow::onSendGroupMessageClicked);
-
-    // --- Add tabs to widget ---
     m_tabWidget->addTab(m_historyTab, "History");
     m_tabWidget->addTab(m_collabTab, "Collaboration");
 
@@ -116,21 +131,29 @@ void ProjectWindow::updateGroupMembers()
 {
     if (!m_networkManager) return;
     
+    m_repoInfo = m_repoManager->getRepositoryInfo(m_appId);
+    if (!m_repoInfo.isValid()) return;
+
     m_groupMembersList->clear();
     QList<QString> connectedPeers = m_networkManager->getConnectedPeerIds();
     
-    QStringList members = m_repoInfo.collaborators;
-    members.prepend(m_repoInfo.adminPeerId);
+    QStringList members = m_repoInfo.groupMembers;
     members.removeDuplicates();
+    members.sort();
 
     for (const QString& member : members) {
         QListWidgetItem* item = new QListWidgetItem(m_groupMembersList);
-        bool isConnected = connectedPeers.contains(member);
+        bool isConnected = connectedPeers.contains(member) || (member == m_networkManager->getMyUsername());
         
-        item->setText(member + (member == m_repoInfo.adminPeerId ? " (owner)" : ""));
+        item->setText(member + (member == m_repoInfo.ownerPeerId ? " (owner)" : ""));
         item->setIcon(isConnected ? style()->standardIcon(QStyle::SP_DialogYesButton) : style()->standardIcon(QStyle::SP_DialogCancelButton));
         item->setForeground(isConnected ? palette().color(QPalette::Text) : QColor("grey"));
+        item->setData(Qt::UserRole, member);
     }
+    
+    m_addCollaboratorButton->setVisible(m_repoInfo.isOwner);
+    m_removeCollaboratorButton->setVisible(m_repoInfo.isOwner);
+    onGroupMemberSelectionChanged();
 }
 
 void ProjectWindow::displayGroupMessage(const QString& peerId, const QString& message)
@@ -147,8 +170,36 @@ void ProjectWindow::onSendGroupMessageClicked()
     QString message = m_groupChatInput->text().trimmed();
     if (message.isEmpty()) return;
 
-    emit groupMessageSent(m_appId, message);
+    emit groupMessageSent(m_repoInfo.ownerRepoAppId, message);
     m_groupChatInput->clear();
+}
+
+void ProjectWindow::onAddCollaboratorClicked()
+{
+    emit addCollaboratorRequested(m_appId);
+}
+
+void ProjectWindow::onRemoveCollaboratorClicked()
+{
+    QListWidgetItem* selectedItem = m_groupMembersList->currentItem();
+    if (!selectedItem) return;
+
+    QString peerIdToRemove = selectedItem->data(Qt::UserRole).toString();
+    emit removeCollaboratorRequested(m_appId, peerIdToRemove);
+}
+
+void ProjectWindow::onGroupMemberSelectionChanged()
+{
+    bool canRemove = false;
+    QListWidgetItem* selectedItem = m_groupMembersList->currentItem();
+
+    if (selectedItem && m_repoInfo.isOwner) {
+        QString peerId = selectedItem->data(Qt::UserRole).toString();
+        if (peerId != m_repoInfo.ownerPeerId) {
+            canRemove = true;
+        }
+    }
+    m_removeCollaboratorButton->setEnabled(canRemove);
 }
 
 void ProjectWindow::refreshLog()

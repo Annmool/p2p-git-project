@@ -24,12 +24,11 @@ DashboardPanel::DashboardPanel(QWidget *parent) : QWidget(parent)
 
 void DashboardPanel::setupUi()
 {
-    setObjectName("mainContentPanel"); // For QSS styling
+    setObjectName("mainContentPanel");
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
-    // Welcome Header
-    QLabel* welcomeHeader = new QLabel("Hello Admin! Welcome to ThisnThat", this);
-    welcomeHeader->setProperty("heading", "1"); // For QSS
+    QLabel* welcomeHeader = new QLabel("Hello! Welcome to ThisnThat", this);
+    welcomeHeader->setProperty("heading", "1");
     mainLayout->addWidget(welcomeHeader);
 
     QLabel* subHeader = new QLabel("Ready to explore? Here's everything you can manage and create.", this);
@@ -38,9 +37,8 @@ void DashboardPanel::setupUi()
 
     mainLayout->addSpacing(20);
 
-    // Managed Repositories Section
     QLabel* projectsHeader = new QLabel("Your Projects", this);
-    projectsHeader->setProperty("heading", "2"); // For QSS
+    projectsHeader->setProperty("heading", "2");
     mainLayout->addWidget(projectsHeader);
 
     m_managedReposListWidget = new QListWidget(this);
@@ -97,12 +95,13 @@ void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, c
             QString itemText = QString("<b>%1</b> <font color='gray'>(%2)</font>")
                                    .arg(repoInfo.displayName.toHtmlEscaped())
                                    .arg(repoInfo.isPublic ? "Public" : "Private");
-            bool isOwnedByMe = (repoInfo.ownerPeerId == myPeerId);
-            if (!isOwnedByMe) {
+            
+            if (!repoInfo.isOwner) {
                 itemText += QString("<br><small><i>Owner: %1</i></small>").arg(repoInfo.ownerPeerId.toHtmlEscaped());
             } else {
                 itemText += QString("<br><small><i>Owner: You</i></small>");
             }
+            
             QListWidgetItem *item = new QListWidgetItem();
             QLabel *itemLabel = new QLabel(itemText);
             itemLabel->setWordWrap(true);
@@ -111,6 +110,7 @@ void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, c
             m_managedReposListWidget->setItemWidget(item, itemLabel);
             item->setData(Qt::UserRole, repoInfo.appId);
             item->setToolTip(QDir::toNativeSeparators(repoInfo.localPath));
+            
             if (repoInfo.appId == previouslySelectedId) {
                 m_managedReposListWidget->setCurrentItem(item);
             }

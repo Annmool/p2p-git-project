@@ -1,4 +1,5 @@
 #include "repo_management_panel.h"
+#include "repository_manager.h" // For ManagedRepositoryInfo
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -8,6 +9,7 @@
 #include <QTextEdit>
 #include <QDir>
 #include <QMessageBox>
+#include <algorithm>
 
 RepoManagementPanel::RepoManagementPanel(QWidget *parent) : QWidget(parent)
 {
@@ -58,7 +60,8 @@ QString RepoManagementPanel::getSelectedRepoId() const
     return selectedItems.first()->data(Qt::UserRole).toString();
 }
 
-void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos)
+// FIX: Added the missing 'const QString &myPeerId' parameter and used correct members
+void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, const QString &myPeerId)
 {
     QString previouslySelectedId = getSelectedRepoId();
     m_managedReposListWidget->clear();
@@ -75,9 +78,9 @@ void RepoManagementPanel::updateRepoList(const QList<ManagedRepositoryInfo> &rep
                                    .arg(repoInfo.displayName.toHtmlEscaped())
                                    .arg(repoInfo.isPublic ? "Public" : "Private");
 
-            if (!repoInfo.originPeerId.isEmpty())
+            if (repoInfo.ownerPeerId != myPeerId)
             {
-                itemText += QString("<br><small><i>Cloned from: %1</i></small>").arg(repoInfo.originPeerId.toHtmlEscaped());
+                itemText += QString("<br><small><i>Owner: %1</i></small>").arg(repoInfo.ownerPeerId.toHtmlEscaped());
             }
             else
             {
