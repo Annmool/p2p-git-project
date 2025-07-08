@@ -9,6 +9,7 @@
 #include <QMetaType>
 #include <QStringList>
 
+// Defines all the data for a repository you are tracking.
 struct ManagedRepositoryInfo
 {
     QString appId;
@@ -52,6 +53,7 @@ public:
 
     QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf() const;
     QList<ManagedRepositoryInfo> getMyPubliclyShareableRepos() const;
+    QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
 
 signals:
     void managedRepositoryListChanged();

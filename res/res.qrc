@@ -1,0 +1,10 @@
+<RCC>
+    <qresource prefix="/">
+        <file>styles.qss</file>
+        <file>icons/activity.svg</file>
+        <file>icons/bell.svg</file>
+        <file>icons/folder.svg</file>
+        <file>icons/git-pull-request.svg</file>
+        <file>icons/message-square.svg</file>
+    </qresource>
+</RCC>

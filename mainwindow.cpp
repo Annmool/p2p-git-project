@@ -22,6 +22,51 @@
 #include <QStandardPaths>
 #include <QIcon>
 #include <QListWidget>
+#include <QFile>
+#include <QSvgRenderer> // <<< ADD THIS INCLUDE
+#include <QPainter>      // <<< ADD THIS INCLUDE
+#include<QLabel>
+
+QIcon createTintedIcon(const QString &resourcePath, const QColor &color) {
+    QFile file(resourcePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "Could not open icon file:" << resourcePath;
+        return QIcon();
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    data.replace("currentColor", color.name().toUtf8());
+
+    QSvgRenderer renderer(data);
+    QPixmap pixmap(renderer.defaultSize());
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    renderer.render(&painter);
+
+    return QIcon(pixmap);
+}
+
+// class UserProfileWidget : public QWidget {
+// public:
+//     UserProfileWidget(const QString& username, QWidget* parent = nullptr) : QWidget(parent) {
+//         setObjectName("userProfileWidget");
+//         QHBoxLayout* layout = new QHBoxLayout(this);
+//         layout->setContentsMargins(8, 5, 8, 5);
+//         layout->setSpacing(10);
+        
+//         QLabel* avatar = new QLabel(username.left(1).toUpper(), this);
+//         avatar->setObjectName("userAvatarLabel");
+//         avatar->setAlignment(Qt::AlignCenter);
+
+//         QLabel* name = new QLabel(username, this);
+//         name->setObjectName("usernameLabel");
+        
+//         layout->addWidget(avatar);
+//         layout->addWidget(name, 1);
+//     }
+// }
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -45,7 +90,7 @@ MainWindow::MainWindow(QWidget *parent)
         QTimer::singleShot(0, this, &QWidget::close);
         return;
     }
-
+    
     QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     QDir configDir(configPath);
     configDir.mkpath("P2PGitClient/" + m_myUsername);
@@ -64,14 +109,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_networkManager->startTcpServer();
 }
 
+
 MainWindow::~MainWindow()
 {
-    // Child QObjects are deleted by their parent automatically
+    // Qt's parent-child ownership handles deletion of managers and panels
 }
-
 void MainWindow::setupUi()
 {
-    setWindowTitle("P2P Git Client - " + m_myUsername);
+    setWindowTitle("SyncIt - " + m_myUsername);
     resize(1400, 800);
     QWidget *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
@@ -79,38 +124,50 @@ void MainWindow::setupUi()
     mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    m_navigationPanel = new QWidget(this);
-    m_navigationPanel->setObjectName("navigationPanel");
-    m_navigationPanel->setFixedWidth(200);
-    QVBoxLayout *navLayout = new QVBoxLayout(m_navigationPanel);
-    navLayout->setAlignment(Qt::AlignTop);
+    m_sidebarPanel = new QWidget(this);
+    m_sidebarPanel->setObjectName("sidebarPanel");
+    m_sidebarPanel->setFixedWidth(240);
+    QVBoxLayout *sidebarLayout = new QVBoxLayout(m_sidebarPanel);
+    sidebarLayout->setContentsMargins(8, 8, 8, 8);
+    sidebarLayout->setSpacing(4);
+
+    QLabel* logoLabel = new QLabel("SyncIt", this);
+    logoLabel->setObjectName("logoLabel");
+    sidebarLayout->addWidget(logoLabel);
+    sidebarLayout->addSpacing(10);
 
     m_dashboardButton = new QToolButton(this);
     m_dashboardButton->setText("Dashboard");
-    m_dashboardButton->setIcon(QIcon(":/icons/activity.svg"));
     m_dashboardButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_dashboardButton->setCheckable(true);
     m_dashboardButton->setChecked(true);
 
     m_networkButton = new QToolButton(this);
     m_networkButton->setText("Network");
-    m_networkButton->setIcon(QIcon(":/icons/message-square.svg"));
     m_networkButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_networkButton->setCheckable(true);
 
-    navLayout->addWidget(m_dashboardButton);
-    navLayout->addWidget(m_networkButton);
+    sidebarLayout->addWidget(m_dashboardButton);
+    sidebarLayout->addWidget(m_networkButton);
+    sidebarLayout->addStretch();
+
+    UserProfileWidget* userProfile = new UserProfileWidget(m_myUsername, this);
+    sidebarLayout->addWidget(userProfile);
     
     m_mainContentWidget = new QStackedWidget(this);
     
     m_dashboardPanel = new DashboardPanel(this);
+    m_dashboardPanel->setWelcomeMessage(m_myUsername);
+
     m_networkPanel = new NetworkPanel(this);
 
     m_mainContentWidget->addWidget(m_dashboardPanel);
     m_mainContentWidget->addWidget(m_networkPanel);
 
-    mainLayout->addWidget(m_navigationPanel);
+    mainLayout->addWidget(m_sidebarPanel);
     mainLayout->addWidget(m_mainContentWidget, 1);
+
+    onNavigationClicked(true); 
 }
 
 void MainWindow::connectSignals()
@@ -150,21 +207,24 @@ void MainWindow::connectSignals()
 
 void MainWindow::onNavigationClicked(bool checked)
 {
-    QToolButton *button = qobject_cast<QToolButton*>(sender());
-    if (!button || !checked) {
-        if(button) button->setChecked(true);
-        return;
+    Q_UNUSED(checked);
+    QToolButton *clickedButton = qobject_cast<QToolButton*>(sender());
+    if (!clickedButton) {
+        clickedButton = m_dashboardButton;
     }
 
-    if (button == m_dashboardButton) {
-        m_networkButton->setChecked(false);
+    m_dashboardButton->setChecked(clickedButton == m_dashboardButton);
+    m_networkButton->setChecked(clickedButton == m_networkButton);
+
+    m_dashboardButton->setIcon(createTintedIcon(":/icons/activity.svg", m_dashboardButton->isChecked() ? Qt::white : QColor("#374151")));
+    m_networkButton->setIcon(createTintedIcon(":/icons/message-square.svg", m_networkButton->isChecked() ? Qt::white : QColor("#374151")));
+
+    if (m_dashboardButton->isChecked()) {
         m_mainContentWidget->setCurrentWidget(m_dashboardPanel);
-    } else if (button == m_networkButton) {
-        m_dashboardButton->setChecked(false);
+    } else if (m_networkButton->isChecked()) {
         m_mainContentWidget->setCurrentWidget(m_networkPanel);
     }
 }
-
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (m_networkManager)

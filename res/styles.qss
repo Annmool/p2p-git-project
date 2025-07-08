@@ -1,95 +1,166 @@
-/* Main Colors from Figma Design */
-:root {
-    --primary-color: #2D5F5D;
-    --background-color: #FFFFFF;
-    --secondary-background-color: #F8F9FA;
-    --text-color: #212529;
-    --secondary-text-color: #6c757d;
-    --border-color: #dee2e6;
-    --accent-color: #4A90E2; /* A generic blue for accents */
+/* Global Colors & Fonts */
+* {
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    color: #334155; /* slate-700 */
+    font-size: 14px;
 }
 
-/* Global Styles */
 QMainWindow, QDialog {
-    background-color: var(--background-color);
+    background-color: #F8FAFC; /* slate-50 */
 }
 
-QWidget {
-    font-family: "Segoe UI", "Cantarell", "sans-serif";
-    color: var(--text-color);
+/* === Left Sidebar Panel === */
+#sidebarPanel {
+    background-color: #0F4C4A; /* Dark Teal */
+    border-right: none;
 }
 
-/* === Left Navigation Panel === */
-#navigationPanel {
-    background-color: var(--primary-color);
-    border-right: 1px solid var(--border-color);
-}
-
-#navigationPanel QToolButton {
+#logoLabel {
+    font-size: 18px;
+    font-weight: bold;
     color: #FFFFFF;
+    padding: 15px 12px;
+}
+
+#sidebarPanel QToolButton {
+    color: #E2E8F0; /* slate-200, for non-selected text */
     background-color: transparent;
     border: none;
-    padding: 12px;
+    padding: 10px 12px;
     text-align: left;
     font-size: 14px;
-    border-radius: 5px;
-    margin: 4px 8px; /* Top/Bottom, Left/Right */
+    font-weight: 500;
+    border-radius: 6px;
+    margin: 2px 8px;
 }
 
-#navigationPanel QToolButton:hover {
+#sidebarPanel QToolButton:hover {
     background-color: rgba(255, 255, 255, 0.1);
+    color: #FFFFFF;
 }
 
-#navigationPanel QToolButton:checked {
-    background-color: rgba(255, 255, 255, 0.2);
-    font-weight: bold;
+#sidebarPanel QToolButton:checked {
+    background-color: #FFFFFF;
+    color: #0F4C4A; /* Dark Teal text on white background */
+    font-weight: 600;
 }
+
+/* === User Profile Section at the bottom of sidebar === */
+#userProfileWidget {
+    border-top: 1px solid #2D5F5D; /* A slightly lighter teal for separator */
+    padding-top: 10px;
+    margin-top: 10px;
+}
+
+QLabel#userAvatarLabel {
+    background-color: #F87171; /* A placeholder color for the avatar, e.g., red-400 */
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    border-radius: 15px; /* Makes it a circle */
+    min-width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    max-height: 30px;
+}
+
+QLabel#usernameLabel {
+    color: #FFFFFF;
+    font-weight: 500;
+}
+
 
 /* === Main Content Area === */
 #mainContentPanel {
-    background-color: var(--secondary-background-color);
-    padding: 20px;
+    background-color: #FFFFFF;
+    padding: 24px;
+    border: none;
 }
 
 /* Generic Headers */
 QLabel[heading="1"] {
     font-size: 24px;
-    font-weight: bold;
-    color: var(--text-color);
+    font-weight: 600;
+    color: #1E293B; /* slate-800 */
+    padding-bottom: 4px;
 }
 QLabel[heading="2"] {
     font-size: 18px;
-    font-weight: bold;
+    font-weight: 600;
     margin-top: 15px;
-    color: var(--text-color);
+    color: #334155; /* slate-700 */
 }
 
 /* Buttons */
 QPushButton {
-    background-color: #f0f0f0;
-    border: 1px solid #ccc;
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1; /* slate-300 */
     padding: 8px 16px;
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 14px;
+    font-weight: 500;
+    color: #334155; /* slate-700 */
 }
 QPushButton:hover {
-    background-color: #e0e0e0;
+    background-color: #F8FAFC; /* slate-50 */
+    border-color: #94A3B8; /* slate-400 */
+}
+QPushButton:disabled {
+    background-color: #F1F5F9; /* slate-100 */
+    color: #94A3B8; /* slate-400 */
+    border-color: #E2E8F0; /* slate-200 */
 }
 
-/* Primary Action Button Style */
+/* Primary Action Button Style (e.g., Upload) */
 QPushButton#primaryButton {
-    background-color: var(--primary-color);
+    background-color: #0F4C4A; /* Dark Teal */
     color: #FFFFFF;
     border: none;
     font-weight: bold;
 }
 QPushButton#primaryButton:hover {
-    background-color: #38706E;
+    background-color: #14625F; /* Lighter shade for hover */
 }
 
-/* Card Style */
-QFrame#card {
-    background-color: var(--background-color);
-    border: 1px solid var(--border-color);
+/* Text Inputs */
+QLineEdit, QTextEdit, QListView, QTreeView, QTreeWidget, QListWidget {
+    border: 1px solid #CBD5E1; /* slate-300 */
+    border-radius: 6px;
+    padding: 8px;
+    background-color: #FFFFFF;
+}
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid #4A90E2;
+}
+
+/* === Repository Card Styling === */
+QListWidget#repoListWidget {
+    border: none;
+    background-color: transparent;
+}
+QListWidget#repoListWidget::item {
+    border: none; /* The card itself has the border */
+    margin-bottom: 8px;
+}
+QListWidget#repoListWidget::item:selected {
+    background-color: transparent; /* No selection color on the item itself */
+}
+
+#RepoCardWidget {
+    background-color: white;
+    border: 1px solid #E2E8F0; /* slate-200 */
     border-radius: 8px;
+}
+#RepoCardWidget:hover {
+    border-color: #4A90E2;
+}
+
+QLabel#repoNameLabel {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0F4C4A; /* Dark Teal */
+}
+
+QLabel#repoDetailLabel {
+    color: #64748B; /* slate-500 */
 }
