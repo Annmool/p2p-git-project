@@ -25,7 +25,7 @@ This project creates a **distributed version-control platform**:
 
 ## Motivation
 
-Bhai, traditional Git revolves around a central server like GitHub—it's client-server, not P2P. This project aims to break that mold and allow:
+Traditional Git revolves around a central server like GitHub—it's client-server, not P2P. This project aims to break that mold and allow:
 
 - 🔗 True peer-to-peer cloning and sharing  
 - 🛡️ Security via commit verification  
