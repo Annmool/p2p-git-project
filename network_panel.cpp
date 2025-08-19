@@ -68,13 +68,26 @@ void NetworkPanel::logGroupChatMessage(const QString &repoName, const QString &p
 
 void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &discoveredPeers, const QList<QString> &connectedPeerIds)
 {
-    QString selectedPeer;
-    if (discoveredPeersTreeWidget->currentItem() && !discoveredPeersTreeWidget->currentItem()->parent())
-    {
-        selectedPeer = discoveredPeersTreeWidget->currentItem()->text(0);
+    // ================== THE FIX STARTS HERE ==================
+
+    // 1. Preserve the current selection's identifying information
+    QString selectedPeerId;
+    QString selectedRepoName;
+    QTreeWidgetItem* currentItem = discoveredPeersTreeWidget->currentItem();
+    if (currentItem) {
+        if (currentItem->parent()) { // It's a repo item
+            selectedRepoName = currentItem->data(0, Qt::UserRole).toString();
+            selectedPeerId = currentItem->parent()->text(0);
+        } else { // It's a peer item
+            selectedPeerId = currentItem->text(0);
+        }
     }
 
+    // Block signals to prevent the UI from flickering or buttons from disabling prematurely
+    discoveredPeersTreeWidget->blockSignals(true);
+    
     discoveredPeersTreeWidget->clear();
+
     for (const auto &peerInfo : discoveredPeers)
     {
         QTreeWidgetItem *peerItem = new QTreeWidgetItem(discoveredPeersTreeWidget);
@@ -87,20 +100,35 @@ void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &disco
         QString pkHashStr = QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
         peerItem->setText(1, QString("(%1) [PKH:%2]").arg(peerInfo.address.toString(), pkHashStr));
 
+        peerItem->setExpanded(true); // Keep items expanded by default
+
         for (const QString &repoName : peerInfo.publicRepoNames)
         {
             QTreeWidgetItem *repoItem = new QTreeWidgetItem(peerItem);
             repoItem->setText(0, "  " + repoName);
-            repoItem->setData(0, Qt::UserRole, repoName);
-            repoItem->setData(0, Qt::UserRole + 1, peerInfo.id);
+            repoItem->setData(0, Qt::UserRole, repoName); // Store repo name
+            repoItem->setData(0, Qt::UserRole + 1, peerInfo.id); // Store parent peer ID
             repoItem->setText(1, "Public");
+
+            // 2. Check if this repopulated item matches the one we saved
+            if (peerInfo.id == selectedPeerId && repoName == selectedRepoName) {
+                discoveredPeersTreeWidget->setCurrentItem(repoItem);
+            }
         }
-        peerItem->setExpanded(true);
-        if (peerInfo.id == selectedPeer)
-        {
+
+        // 2. (cont'd) Check if the peer item itself was the one selected
+        if (peerInfo.id == selectedPeerId && selectedRepoName.isEmpty()) {
             discoveredPeersTreeWidget->setCurrentItem(peerItem);
         }
     }
+    
+    // Re-enable signals after the update is complete
+    discoveredPeersTreeWidget->blockSignals(false);
+
+    // Manually trigger an update of the button states based on the (potentially restored) selection
+    onDiscoveredPeerOrRepoSelected(discoveredPeersTreeWidget->currentItem());
+
+    // =================== THE FIX ENDS HERE ===================
 }
 
 void NetworkPanel::updateServerStatus(bool listening, quint16 port, const QString &error)
@@ -111,9 +139,11 @@ void NetworkPanel::updateServerStatus(bool listening, quint16 port, const QStrin
         toggleDiscoveryButton->setText("Stop Discovery & TCP Server");
         if (!m_myUsername.isEmpty())
         {
+            // A safer way to update text without relying on previous content
+            QString pkPrefix = myPeerInfoLabel->property("pkPrefix").toString();
             myPeerInfoLabel->setText(QString("<b>My Peer ID:</b> %1<br><b>PubKey (prefix):</b> %2...<br><b>TCP Port:</b> %3")
                                          .arg(m_myUsername.toHtmlEscaped())
-                                         .arg(myPeerInfoLabel->text().split("...").first().split(":").last().trimmed())
+                                         .arg(pkPrefix)
                                          .arg(port));
         }
     }
@@ -181,10 +211,12 @@ void NetworkPanel::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current)
 
     if (current->parent())
     {
+        // It's a repo, enable cloning
         cloneRepoButton->setEnabled(true);
     }
     else
     {
+        // It's a peer, enable connecting if not already connected
         if (m_networkManager)
         {
             bool isConnected = m_networkManager->getSocketForPeer(current->text(0)) != nullptr;

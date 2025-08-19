@@ -162,11 +162,36 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             if (!in.commitTransaction()) return;
             
             QString expectedPeerId = m_socketToPeerUsernameMap.value(socket, "");
-            if(expectedPeerId.isEmpty() || expectedPeerId == peerUsername) {
+            
+            if(expectedPeerId.isEmpty() || expectedPeerId.startsWith("ConnectingTo:") || expectedPeerId == peerUsername) {
                 m_socketToPeerUsernameMap.insert(socket, peerUsername);
                 m_peerPublicKeys.insert(peerUsername, QByteArray::fromHex(peerKeyHex.toUtf8()));
-                if (!m_handshakeSent.contains(socket)) sendIdentityOverTcp(socket);
+                
+                if (!m_handshakeSent.contains(socket)) {
+                    sendIdentityOverTcp(socket);
+                }
                 emit newTcpPeerConnected(socket, peerUsername, peerKeyHex);
+
+                // --- LOGIC WITH THE FIX ---
+                if (socket->property("is_transfer_socket").toBool()) {
+                    // FIX: Use .value<QVariantMap>() instead of .toVariantMap()
+                    QVariantMap pendingRequest = socket->property("pending_bundle_request").value<QVariantMap>();
+                    if (!pendingRequest.isEmpty()) {
+                        QString repoName = pendingRequest.value("repoName").toString();
+                        QString localPath = pendingRequest.value("localPath").toString();
+                        qDebug() << "Handshake complete on transfer socket. Now sending repo bundle request for" << repoName;
+                        
+                        QByteArray block;
+                        QDataStream out(&block, QIODevice::WriteOnly);
+                        out.setVersion(QDataStream::Qt_5_15);
+                        out << QString("REQUEST_REPO_BUNDLE") << m_myUsername << repoName << localPath;
+                        socket->write(block);
+                        
+                        socket->setProperty("pending_bundle_request", QVariant());
+                    }
+                }
+                // --- END OF FIX ---
+
             } else {
                  qWarning() << "Identity mismatch! Expected" << expectedPeerId << "but got" << peerUsername;
                  socket->disconnectFromHost();
@@ -176,7 +201,9 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
              QString requestingPeer, repoName, temp;
              in >> requestingPeer >> repoName >> temp;
              if (!in.commitTransaction()) return;
-             m_socketToPeerUsernameMap.insert(socket, "Transfer:" + repoName);
+             if (!m_socketToPeerUsernameMap.contains(socket) || m_socketToPeerUsernameMap.value(socket).startsWith("ConnectingTo:")) {
+                 m_socketToPeerUsernameMap.insert(socket, requestingPeer);
+             }
              handleRepoRequest(socket, requestingPeer, repoName);
         }
         else if (messageType == "SEND_REPO_BUNDLE_START")
@@ -272,27 +299,45 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         if (in.atEnd()) return;
     }
 }
-
 bool NetworkManager::isConnectionPending(QTcpSocket *socket) const { return m_pendingConnections.contains(socket); }
 
 void NetworkManager::connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath)
 {
     QTcpSocket *socket = new QTcpSocket(this);
+    // Mark this socket so we know its purpose
     socket->setProperty("is_transfer_socket", true);
 
-    connect(socket, &QTcpSocket::connected, this, [=]()
-            {
-        QByteArray block;
-        QDataStream out(&block, QIODevice::WriteOnly);
-        out.setVersion(QDataStream::Qt_5_15);
-        out << QString("REQUEST_REPO_BUNDLE") << myUsername << repoName << localPath;
-        socket->write(block); });
+    // Store the bundle request details as a property on the socket.
+    // We will send this request *after* the handshake is complete.
+    QVariantMap pendingRequest;
+    pendingRequest["repoName"] = repoName;
+    pendingRequest["localPath"] = localPath;
+    socket->setProperty("pending_bundle_request", QVariant::fromValue(pendingRequest));
+
+    // For handshake validation, we need to know who we are connecting to.
+    // Try to find the peer's ID from the discovery list.
+    QString ownerId = findUsernameForAddress(host);
+    if (!ownerId.isEmpty()) {
+        m_socketToPeerUsernameMap.insert(socket, ownerId);
+    } else {
+        // If not found (e.g., direct connection), use a temporary placeholder.
+        m_socketToPeerUsernameMap.insert(socket, "ConnectingTo:" + host.toString());
+    }
+
+    m_allTcpSockets.append(socket);
+
+    connect(socket, &QTcpSocket::connected, this, [this, socket]() {
+        qDebug() << "Transfer socket connected. Sending initial identity handshake.";
+        // The first step is ALWAYS to handshake. The actual bundle request will be sent
+        // later, once the owner's identity is confirmed.
+        sendIdentityOverTcp(socket);
+    });
 
     connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
-    connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
+    connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
 
-    m_socketToPeerUsernameMap.insert(socket, "Transfer:Cloning_" + repoName);
+    qDebug() << "Attempting to connect dedicated transfer socket to" << host.toString() << ":" << port;
     socket->connectToHost(host, port);
 }
 
@@ -746,6 +791,42 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
         qWarning() << "Access denied for repo" << repoName << "to peer" << requestingPeer;
         socket->disconnectFromHost();
     }
+}
+
+void NetworkManager::sendChangeProposal(QTcpSocket* targetPeerSocket, const QString& repoDisplayName, const QString& fromBranch, const QString& bundlePath)
+{
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState) return;
+    QFile bundleFile(bundlePath);
+    if (!bundleFile.open(QIODevice::ReadOnly)) return;
+
+    QByteArray startBlock;
+    QDataStream startOut(&startBlock, QIODevice::WriteOnly);
+    startOut.setVersion(QDataStream::Qt_5_15);
+    startOut << QString("PROPOSE_CHANGES_BUNDLE_START") << repoDisplayName << fromBranch << bundleFile.size();
+    targetPeerSocket->write(startBlock);
+
+    char buffer[65536];
+    while (!bundleFile.atEnd())
+    {
+        qint64 bytesRead = bundleFile.read(buffer, sizeof(buffer));
+        if (bytesRead > 0) {
+            targetPeerSocket->write(buffer, bytesRead);
+            if (!targetPeerSocket->waitForBytesWritten(-1)) {
+                bundleFile.close();
+                QFile::remove(bundlePath);
+                return;
+            }
+        }
+    }
+    bundleFile.close();
+
+    QByteArray endBlock;
+    QDataStream endOut(&endBlock, QIODevice::WriteOnly);
+    endOut.setVersion(QDataStream::Qt_5_15);
+    endOut << QString("PROPOSE_CHANGES_BUNDLE_END") << repoDisplayName;
+    targetPeerSocket->write(endBlock);
+    
+    // The temporary bundle file is removed by the caller after sending
 }
 
 DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const

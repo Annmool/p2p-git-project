@@ -15,9 +15,9 @@ class RepoCardWidget : public QWidget {
 public:
     RepoCardWidget(const ManagedRepositoryInfo& info, const QString& myPeerId, QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName("RepoCardWidget");
-        QHBoxLayout* mainLayout = new QHBoxLayout(this);
-        
-        QVBoxLayout* textLayout = new QVBoxLayout();
+        this->setContentsMargins(0,0,0,0);
+        QVBoxLayout* mainLayout = new QVBoxLayout(this);
+        mainLayout->setContentsMargins(12, 12, 12, 12);
         
         QLabel* nameLabel = new QLabel(info.displayName, this);
         nameLabel->setObjectName("repoNameLabel");
@@ -26,13 +26,12 @@ public:
         QLabel* detailLabel = new QLabel(ownerText, this);
         detailLabel->setObjectName("repoDetailLabel");
         
-        textLayout->addWidget(nameLabel);
-        textLayout->addWidget(detailLabel);
-        textLayout->addStretch();
-        
-        mainLayout->addLayout(textLayout, 1);
+        mainLayout->addWidget(nameLabel);
+        mainLayout->addWidget(detailLabel);
+        mainLayout->addStretch();
     }
 };
+
 
 DashboardPanel::DashboardPanel(QWidget *parent) : QWidget(parent)
 {
@@ -75,22 +74,22 @@ void DashboardPanel::setupUi()
     m_projectsContentStack = new QStackedWidget(this);
     
     m_managedReposListWidget = new QListWidget(this);
-    m_managedReposListWidget->setStyleSheet("QListWidget { border: none; background-color: transparent; } QListWidget::item { border-radius: 8px; margin-bottom: 8px; }");
+    m_managedReposListWidget->setObjectName("repoListWidget");
     m_managedReposListWidget->setSpacing(5);
     
     m_noProjectsWidget = new QWidget(this);
-    m_noProjectsWidget->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E7EB;");
+    m_noProjectsWidget->setStyleSheet("background-color: white; border-radius: 8px; border: 1px dashed #E2E8F0;");
     QVBoxLayout *noProjectsLayout = new QVBoxLayout(m_noProjectsWidget);
     noProjectsLayout->setAlignment(Qt::AlignCenter);
     noProjectsLayout->setSpacing(10);
     
     QLabel* noProjectsImage = new QLabel(this);
-    noProjectsImage->setPixmap(QPixmap(":/icons/folder.svg").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    noProjectsImage->setPixmap(QPixmap(":/icons/folder.svg").scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     noProjectsImage->setAlignment(Qt::AlignCenter);
 
     QLabel* noProjectsText = new QLabel("No projects yet, upload your first project", this);
     noProjectsText->setAlignment(Qt::AlignCenter);
-    noProjectsText->setStyleSheet("color: #6c757d; font-size: 16px; border: none;");
+    noProjectsText->setStyleSheet("color: #6c757d; font-size: 16px; border: none; background: transparent;");
 
     noProjectsLayout->addStretch();
     noProjectsLayout->addWidget(noProjectsImage);
@@ -116,6 +115,7 @@ void DashboardPanel::setupUi()
     m_statusLog->setMaximumHeight(100);
     mainLayout->addWidget(m_statusLog);
 }
+
 
 void DashboardPanel::setWelcomeMessage(const QString& username)
 {
@@ -147,6 +147,7 @@ void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, c
             RepoCardWidget *card = new RepoCardWidget(repoInfo, myPeerId, m_managedReposListWidget);
 
             item->setSizeHint(card->sizeHint());
+            m_managedReposListWidget->addItem(item);
             m_managedReposListWidget->setItemWidget(item, card);
             item->setData(Qt::UserRole, repoInfo.appId);
 

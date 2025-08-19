@@ -8,7 +8,6 @@
 #include "git_backend.h"
 
 #include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QFileDialog>
@@ -21,52 +20,31 @@
 #include <QCryptographicHash>
 #include <QStandardPaths>
 #include <QIcon>
-#include <QListWidget>
 #include <QFile>
-#include <QSvgRenderer> // <<< ADD THIS INCLUDE
-#include <QPainter>      // <<< ADD THIS INCLUDE
-#include<QLabel>
+#include <QSvgRenderer>
+#include <QPainter>
+#include <QTemporaryFile>
 
+// Helper function to tint SVG icons
 QIcon createTintedIcon(const QString &resourcePath, const QColor &color) {
-    QFile file(resourcePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        qWarning() << "Could not open icon file:" << resourcePath;
+    QSvgRenderer renderer(resourcePath);
+    if (!renderer.isValid()) {
+        qWarning() << "Could not load SVG icon:" << resourcePath;
         return QIcon();
     }
-
-    QByteArray data = file.readAll();
-    file.close();
-
-    data.replace("currentColor", color.name().toUtf8());
-
-    QSvgRenderer renderer(data);
+    
     QPixmap pixmap(renderer.defaultSize());
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     renderer.render(&painter);
+    
+    QPainter maskPainter(&pixmap);
+    maskPainter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    maskPainter.fillRect(pixmap.rect(), color);
+    maskPainter.end();
 
     return QIcon(pixmap);
 }
-
-// class UserProfileWidget : public QWidget {
-// public:
-//     UserProfileWidget(const QString& username, QWidget* parent = nullptr) : QWidget(parent) {
-//         setObjectName("userProfileWidget");
-//         QHBoxLayout* layout = new QHBoxLayout(this);
-//         layout->setContentsMargins(8, 5, 8, 5);
-//         layout->setSpacing(10);
-        
-//         QLabel* avatar = new QLabel(username.left(1).toUpper(), this);
-//         avatar->setObjectName("userAvatarLabel");
-//         avatar->setAlignment(Qt::AlignCenter);
-
-//         QLabel* name = new QLabel(username, this);
-//         name->setObjectName("usernameLabel");
-        
-//         layout->addWidget(avatar);
-//         layout->addWidget(name, 1);
-//     }
-// }
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -109,11 +87,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_networkManager->startTcpServer();
 }
 
+MainWindow::~MainWindow() {}
 
-MainWindow::~MainWindow()
-{
-    // Qt's parent-child ownership handles deletion of managers and panels
-}
 void MainWindow::setupUi()
 {
     setWindowTitle("SyncIt - " + m_myUsername);
@@ -191,6 +166,7 @@ void MainWindow::connectSignals()
         connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
         connect(m_networkManager, &NetworkManager::collaboratorAddedReceived, this, &MainWindow::handleCollaboratorAdded);
         connect(m_networkManager, &NetworkManager::collaboratorRemovedReceived, this, &MainWindow::handleCollaboratorRemoved);
+        connect(m_networkManager, &NetworkManager::changeProposalReceived, this, &MainWindow::handleIncomingChangeProposal);
     }
 
     connect(m_dashboardPanel, &DashboardPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
@@ -216,8 +192,8 @@ void MainWindow::onNavigationClicked(bool checked)
     m_dashboardButton->setChecked(clickedButton == m_dashboardButton);
     m_networkButton->setChecked(clickedButton == m_networkButton);
 
-    m_dashboardButton->setIcon(createTintedIcon(":/icons/activity.svg", m_dashboardButton->isChecked() ? Qt::white : QColor("#374151")));
-    m_networkButton->setIcon(createTintedIcon(":/icons/message-square.svg", m_networkButton->isChecked() ? Qt::white : QColor("#374151")));
+    m_dashboardButton->setIcon(createTintedIcon(":/icons/activity.svg", m_dashboardButton->isChecked() ? Qt::white : QColor("#E2E8F0")));
+    m_networkButton->setIcon(createTintedIcon(":/icons/message-square.svg", m_networkButton->isChecked() ? Qt::white : QColor("#E2E8F0")));
 
     if (m_dashboardButton->isChecked()) {
         m_mainContentWidget->setCurrentWidget(m_dashboardPanel);
@@ -225,6 +201,7 @@ void MainWindow::onNavigationClicked(bool checked)
         m_mainContentWidget->setCurrentWidget(m_networkPanel);
     }
 }
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (m_networkManager)
@@ -264,7 +241,11 @@ void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
     connect(projectWindow, &ProjectWindow::groupMessageSent, this, &MainWindow::handleProjectWindowGroupMessage);
     connect(projectWindow, &ProjectWindow::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromProjectWindow);
     connect(projectWindow, &ProjectWindow::removeCollaboratorRequested, this, &MainWindow::handleRemoveCollaboratorFromProjectWindow);
+    connect(projectWindow, &ProjectWindow::fetchBundleRequested, this, &MainWindow::handleFetchBundleRequest);
+    connect(projectWindow, &ProjectWindow::proposeChangesRequested, this, &MainWindow::handleProposeChangesRequest);
 
+    connect(m_networkManager, &NetworkManager::repoBundleCompleted, projectWindow, &ProjectWindow::handleFetchBundleCompleted);
+    
     connect(projectWindow, &QObject::destroyed, this, [this, appId](){
         m_projectWindows.remove(appId);
     });
@@ -272,6 +253,92 @@ void MainWindow::handleOpenRepoInProjectWindow(const QString &appId)
     projectWindow->show();
 }
 
+void MainWindow::handleFetchBundleRequest(const QString& ownerPeerId, const QString& repoDisplayName)
+{
+    DiscoveredPeerInfo providerPeerInfo = m_networkManager->getDiscoveredPeerInfo(ownerPeerId);
+    if (providerPeerInfo.id.isEmpty()) {
+        QMessageBox::critical(this, "Connection Error", "Could not find the repository owner. They may be offline.");
+        return;
+    }
+    m_networkManager->connectAndRequestBundle(providerPeerInfo.address, providerPeerInfo.tcpPort, m_myUsername, repoDisplayName, "");
+}
+
+void MainWindow::handleProposeChangesRequest(const QString& ownerPeerId, const QString& repoDisplayName, const QString& fromBranch)
+{
+    QTcpSocket* ownerSocket = m_networkManager->getSocketForPeer(ownerPeerId);
+    if (!ownerSocket) {
+        QMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(ownerPeerId));
+        return;
+    }
+
+    ManagedRepositoryInfo repoInfo = m_repoManager->getCloneInfoByOwnerAndDisplayName(ownerPeerId, repoDisplayName);
+    if (!repoInfo.isValid()) return;
+
+    GitBackend backend;
+    std::string error;
+    if (!backend.openRepository(repoInfo.localPath.toStdString(), error)) return;
+
+    QTemporaryFile tempBundleFile(QDir::tempPath() + "/proposal_XXXXXX.bundle");
+    tempBundleFile.setAutoRemove(false);
+    if (tempBundleFile.open()) {
+        QString bundlePath = tempBundleFile.fileName();
+        tempBundleFile.close();
+        
+        if (backend.createDiffBundle(bundlePath.toStdString(), fromBranch.toStdString(), "origin/main", error)) {
+            m_networkManager->sendChangeProposal(ownerSocket, repoDisplayName, fromBranch, bundlePath);
+            QMessageBox::information(this, "Proposal Sent", "Your changes have been sent to the owner for review.");
+        } else {
+            QMessageBox::warning(this, "Failed to Propose", QString::fromStdString(error));
+        }
+    }
+}
+
+void MainWindow::handleIncomingChangeProposal(const QString& fromPeer, const QString& repoName, const QString& forBranch, const QString& bundlePath)
+{
+    int ret = QMessageBox::question(this, "Change Proposal Received",
+        QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nDo you want to review and merge these changes?").arg(fromPeer, repoName, forBranch),
+        QMessageBox::Yes | QMessageBox::No);
+
+    if (ret == QMessageBox::No) {
+        QFile::remove(bundlePath);
+        return;
+    }
+
+    ManagedRepositoryInfo repoInfo;
+    for(const auto& repo : m_repoManager->getRepositoriesIAmMemberOf()) {
+        if(repo.isOwner && repo.displayName == repoName) {
+            repoInfo = repo;
+            break;
+        }
+    }
+
+    if (!repoInfo.isValid()) {
+        QMessageBox::critical(this, "Error", "Received a change proposal for a repository you don't own or manage.");
+        QFile::remove(bundlePath);
+        return;
+    }
+
+    GitBackend backend;
+    std::string error;
+    if (!backend.openRepository(repoInfo.localPath.toStdString(), error)) {
+        QMessageBox::critical(this, "Error", "Could not open local repository to apply changes.");
+        QFile::remove(bundlePath);
+        return;
+    }
+    
+    if (backend.applyBundle(bundlePath.toStdString(), error)) {
+        QMessageBox::information(this, "Changes Merged", "The proposed changes have been successfully merged.");
+        if (m_projectWindows.contains(repoInfo.appId)) {
+            m_projectWindows[repoInfo.appId]->updateStatus();
+        }
+    } else {
+        QMessageBox::critical(this, "Merge Failed", QString("Could not automatically merge changes. Please check the repository for conflicts.\n\nDetails: %1").arg(QString::fromStdString(error)));
+    }
+    
+    QFile::remove(bundlePath);
+}
+
+// ... All other handler functions are the same as the last complete version you provided ...
 void MainWindow::handleProjectWindowGroupMessage(const QString& ownerRepoAppId, const QString& message)
 {
     m_networkManager->sendGroupChatMessage(ownerRepoAppId, message);
@@ -649,14 +716,15 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
 
     std::string bundleFilePathStd;
     std::string errorMsgBundle;
-    QString tempBundleDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/P2PGitBundles/" + QUuid::createUuid().toString();
-    QDir().mkpath(tempBundleDir);
-
-    if (tempGitBackend.createBundle(tempBundleDir.toStdString(), repoToBundle.displayName.toStdString(), bundleFilePathStd, errorMsgBundle)) {
-        m_networkPanel->logMessage(QString("Bundle for '%1' created. Starting transfer to %2...").arg(repoDisplayName, sourcePeerUsername), "purple");
-        m_networkManager->startSendingBundle(requestingPeerSocket, repoToBundle.displayName, QString::fromStdString(bundleFilePathStd));
-    } else {
-        m_networkPanel->logMessage(QString("Failed to create bundle for '%1': %2").arg(repoToBundle.displayName, QString::fromStdString(errorMsgBundle)), Qt::red);
+    QTemporaryFile tempBundleFile;
+    if(tempBundleFile.open()) {
+        bundleFilePathStd = tempBundleFile.fileName().toStdString();
+        if (tempGitBackend.createBundle(bundleFilePathStd, repoToBundle.displayName.toStdString(), bundleFilePathStd, errorMsgBundle)) {
+            m_networkPanel->logMessage(QString("Bundle for '%1' created. Starting transfer to %2...").arg(repoDisplayName, sourcePeerUsername), "purple");
+            m_networkManager->startSendingBundle(requestingPeerSocket, repoDisplayName, QString::fromStdString(bundleFilePathStd));
+        } else {
+            m_networkPanel->logMessage(QString("Failed to create bundle for '%1': %2").arg(repoToBundle.displayName, QString::fromStdString(errorMsgBundle)), Qt::red);
+        }
     }
 }
 
@@ -672,6 +740,7 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
 
     if (!m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoDisplayName != repoName) {
         m_networkPanel->logMessage(QString("Received unexpected bundle for '%1'.").arg(repoName), QColor("orange"));
+        QFile::remove(localBundlePath);
         return;
     }
 

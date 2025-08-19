@@ -14,7 +14,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 
-// Forward declarations for other classes
 QT_BEGIN_NAMESPACE
 class QListWidgetItem;
 class QStackedWidget;
@@ -33,6 +32,10 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+public slots:
+    void handleFetchBundleRequest(const QString& ownerPeerId, const QString& repoDisplayName);
+    void handleProposeChangesRequest(const QString& ownerPeerId, const QString& repoDisplayName, const QString& fromBranch);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -58,33 +61,29 @@ private:
             layout->addWidget(name, 1);
         }
     };
-    // --- End of Nested Class ---
     
 private slots:
     void handleAddManagedRepo(const QString &preselectedPath = "");
     void handleModifyRepoAccess(const QString &appId);
     void handleDeleteRepo(const QString &appId);
     void handleOpenRepoInProjectWindow(const QString &appId);
-
     void handleToggleDiscovery();
     void handleConnectToPeer(const QString &peerId);
     void handleCloneRepo(const QString &peerId, const QString &repoName);
     void handleAddCollaboratorFromPanel(const QString &peerId);
     void handleSendBroadcastMessage(const QString &message);
-    
     void handleProjectWindowGroupMessage(const QString& ownerRepoAppId, const QString& message);
     void handleAddCollaboratorFromProjectWindow(const QString& localAppId);
     void handleRemoveCollaboratorFromProjectWindow(const QString &localAppId, const QString &peerIdToRemove);
-
     void handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username);
     void handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
+    void handleIncomingChangeProposal(const QString& fromPeer, const QString& repoName, const QString& forBranch, const QString& bundlePath);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg);
     void handleGroupMessage(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message);
     void handleCollaboratorAdded(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void handleCollaboratorRemoved(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
-
     void updateUiFromBackend();
     void onNavigationClicked(bool checked);
 
@@ -93,6 +92,7 @@ private:
     void connectSignals();
     void addCollaboratorToRepo(const QString& localAppId, const QString& peerIdToAdd);
 
+    // This struct definition is now correct and complete
     struct PendingCloneRequest
     {
         QString ownerPeerId;
@@ -109,13 +109,10 @@ private:
     PendingCloneRequest m_pendingCloneRequest;
 
     QString m_myUsername;
-
     IdentityManager *m_identityManager;
     RepositoryManager *m_repoManager;
     NetworkManager *m_networkManager;
-    
     QMap<QString, ProjectWindow *> m_projectWindows;
-
     DashboardPanel *m_dashboardPanel;
     NetworkPanel *m_networkPanel;
     QStackedWidget *m_mainContentWidget;

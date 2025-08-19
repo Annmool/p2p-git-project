@@ -53,6 +53,7 @@ public:
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
+    void sendChangeProposal(QTcpSocket* targetPeerSocket, const QString& repoDisplayName, const QString& fromBranch, const QString& bundlePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
@@ -72,12 +73,13 @@ signals:
     void lanPeerDiscoveredOrUpdated(const DiscoveredPeerInfo &peerInfo);
     void lanPeerLost(const QString &peerUsername);
     void repoBundleRequestedByPeer(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
-    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
     void repoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void repoBundleSent(const QString &repoName, const QString &recipientUsername);
     void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void collaboratorRemovedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
+    void changeProposalReceived(const QString& fromPeer, const QString& repoName, const QString& forBranch, const QString& bundlePath);
+    void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes); // <<< ADDED THIS LINE
 
 private slots:
     void onNewTcpConnection();
@@ -98,6 +100,9 @@ private:
         QFile file;
         qint64 totalSize = 0;
         qint64 bytesReceived = 0;
+
+        // Custom property to store extra info for different transfer types
+        QMap<QString, QVariant> properties;
     };
 
     QMap<QTcpSocket *, IncomingFileTransfer *> m_incomingTransfers;
