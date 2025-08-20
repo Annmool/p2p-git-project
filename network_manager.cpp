@@ -349,6 +349,35 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
 }
 bool NetworkManager::isConnectionPending(QTcpSocket *socket) const { return m_pendingConnections.contains(socket); }
 
+void NetworkManager::requestBundleFromPeer(const QString &peerId, const QString &repoName, const QString &localPath)
+{
+    // First, check if we already have a connection to this peer
+    QTcpSocket *existingSocket = getSocketForPeer(peerId);
+
+    if (existingSocket && existingSocket->state() == QAbstractSocket::ConnectedState)
+    {
+        // Use the existing connection
+        qDebug() << "Using existing connection to peer" << peerId << "for bundle request";
+        sendRepoBundleRequest(existingSocket, repoName, localPath);
+        return;
+    }
+
+    // No existing connection, need to create a new one
+    qDebug() << "No existing connection to peer" << peerId << ", creating new transfer connection";
+
+    // Get peer info to connect
+    DiscoveredPeerInfo peerInfo = getDiscoveredPeerInfo(peerId);
+    if (peerInfo.id.isEmpty())
+    {
+        qDebug() << "Cannot find peer info for" << peerId;
+        emit repoBundleCompleted(repoName, "", false, "Could not find peer information");
+        return;
+    }
+
+    // Create new connection using the existing method
+    connectAndRequestBundle(peerInfo.address, peerInfo.tcpPort, m_myUsername, repoName, localPath);
+}
+
 void NetworkManager::connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath)
 {
     QTcpSocket *socket = new QTcpSocket(this);

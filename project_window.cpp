@@ -1,5 +1,6 @@
 #include "project_window.h"
 #include "mainwindow.h" // Required for qobject_cast in constructor
+#include "custom_dialogs.h"
 
 #include <QDesktopServices>
 #include <QStandardPaths>
@@ -16,16 +17,17 @@
 
 // --- CommitWidget Implementation ---
 
-CommitWidget::CommitWidget(const CommitInfo& info, QWidget* parent) : QWidget(parent) {
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(parent)
+{
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(4);
     mainLayout->setContentsMargins(10, 8, 10, 8);
 
-    QHBoxLayout* headerLayout = new QHBoxLayout();
-    QLabel* shaLabel = new QLabel(QString("<b>commit</b> <font color='#64748B'>%1</font>").arg(QString::fromStdString(info.sha)), this);
+    QHBoxLayout *headerLayout = new QHBoxLayout();
+    QLabel *shaLabel = new QLabel(QString("<b>commit</b> <font color='#64748B'>%1</font>").arg(QString::fromStdString(info.sha)), this);
     shaLabel->setFont(QFont("monospace"));
-    
-    QPushButton* viewFilesButton = new QPushButton("View Files", this);
+
+    QPushButton *viewFilesButton = new QPushButton("View Files", this);
     viewFilesButton->setFixedSize(100, 28);
     viewFilesButton->setProperty("commitSha", QString::fromStdString(info.sha));
 
@@ -33,14 +35,11 @@ CommitWidget::CommitWidget(const CommitInfo& info, QWidget* parent) : QWidget(pa
     headerLayout->addStretch();
     headerLayout->addWidget(viewFilesButton);
 
-    QLabel* authorLabel = new QLabel(QString("<b>Author:</b> %1 <%2>").arg(
-        QString::fromStdString(info.author_name).toHtmlEscaped(),
-        QString::fromStdString(info.author_email).toHtmlEscaped()
-    ), this);
+    QLabel *authorLabel = new QLabel(QString("<b>Author:</b> %1 <%2>").arg(QString::fromStdString(info.author_name).toHtmlEscaped(), QString::fromStdString(info.author_email).toHtmlEscaped()), this);
 
-    QLabel* dateLabel = new QLabel(QString("<b>Date:</b>   %1").arg(QString::fromStdString(info.date)), this);
-    
-    QLabel* summaryLabel = new QLabel(QString::fromStdString(info.summary), this);
+    QLabel *dateLabel = new QLabel(QString("<b>Date:</b>   %1").arg(QString::fromStdString(info.date)), this);
+
+    QLabel *summaryLabel = new QLabel(QString::fromStdString(info.summary), this);
     summaryLabel->setWordWrap(true);
     summaryLabel->setStyleSheet("margin-left: 15px;");
 
@@ -48,28 +47,31 @@ CommitWidget::CommitWidget(const CommitInfo& info, QWidget* parent) : QWidget(pa
     mainLayout->addWidget(authorLabel);
     mainLayout->addWidget(dateLabel);
     mainLayout->addWidget(summaryLabel);
-    
+
     connect(viewFilesButton, &QPushButton::clicked, this, &CommitWidget::onButtonClicked);
 }
 
-void CommitWidget::onButtonClicked() {
-    QPushButton* button = qobject_cast<QPushButton*>(sender());
-    if(button) {
+void CommitWidget::onButtonClicked()
+{
+    QPushButton *button = qobject_cast<QPushButton *>(sender());
+    if (button)
+    {
         emit viewFilesClicked(button->property("commitSha").toString());
     }
 }
 
 // --- ProjectWindow Implementation ---
 
-ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManager, NetworkManager* networkManager, QWidget *parent)
+ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManager, NetworkManager *networkManager, QWidget *parent)
     : QMainWindow(parent),
       m_appId(appId),
       m_repoManager(repoManager),
       m_networkManager(networkManager)
 {
     m_repoInfo = m_repoManager->getRepositoryInfo(m_appId);
-    if (!m_repoInfo.isValid()) {
-        QMessageBox::critical(this, "Error", "Could not find repository information for ID: " + appId);
+    if (!m_repoInfo.isValid())
+    {
+        CustomMessageBox::critical(this, "Error", "Could not find repository information for ID: " + appId);
         QTimer::singleShot(0, this, &QWidget::close);
         return;
     }
@@ -79,7 +81,7 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManage
     std::string error;
     if (!m_gitBackend.openRepository(m_repoInfo.localPath.toStdString(), error))
     {
-        QMessageBox::critical(this, "Error", "Could not open repository:\n" + QString::fromStdString(error));
+        CustomMessageBox::critical(this, "Error", "Could not open repository:\n" + QString::fromStdString(error));
         close();
         return;
     }
@@ -91,9 +93,9 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManage
     connect(m_addCollaboratorButton, &QPushButton::clicked, this, &ProjectWindow::onAddCollaboratorClicked);
     connect(m_removeCollaboratorButton, &QPushButton::clicked, this, &ProjectWindow::onRemoveCollaboratorClicked);
     connect(m_groupMembersList, &QListWidget::currentItemChanged, this, &ProjectWindow::onGroupMemberSelectionChanged);
-    
-    connect(this, &ProjectWindow::fetchBundleRequested, qobject_cast<MainWindow*>(parentWidget()), &MainWindow::handleFetchBundleRequest);
-    connect(this, &ProjectWindow::proposeChangesRequested, qobject_cast<MainWindow*>(parentWidget()), &MainWindow::handleProposeChangesRequest);
+
+    connect(this, &ProjectWindow::fetchBundleRequested, qobject_cast<MainWindow *>(parentWidget()), &MainWindow::handleFetchBundleRequest);
+    connect(this, &ProjectWindow::proposeChangesRequested, qobject_cast<MainWindow *>(parentWidget()), &MainWindow::handleProposeChangesRequest);
 
     connect(m_refreshStatusButton, &QPushButton::clicked, this, &ProjectWindow::refreshStatus);
     connect(m_stageAllButton, &QPushButton::clicked, this, &ProjectWindow::onStageAllClicked);
@@ -107,18 +109,18 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager* repoManage
 
 ProjectWindow::~ProjectWindow() {}
 
-QWidget* ProjectWindow::createChangesTab()
+QWidget *ProjectWindow::createChangesTab()
 {
-    QWidget* changesWidget = new QWidget();
-    QVBoxLayout* mainLayout = new QVBoxLayout(changesWidget);
-    
-    QSplitter* splitter = new QSplitter(Qt::Vertical, changesWidget);
-    
-    QWidget* stagingArea = new QWidget(splitter);
-    QVBoxLayout* stagingLayout = new QVBoxLayout(stagingArea);
-    stagingLayout->setContentsMargins(0,0,0,0);
-    
-    QHBoxLayout* unstagedHeaderLayout = new QHBoxLayout();
+    QWidget *changesWidget = new QWidget();
+    QVBoxLayout *mainLayout = new QVBoxLayout(changesWidget);
+
+    QSplitter *splitter = new QSplitter(Qt::Vertical, changesWidget);
+
+    QWidget *stagingArea = new QWidget(splitter);
+    QVBoxLayout *stagingLayout = new QVBoxLayout(stagingArea);
+    stagingLayout->setContentsMargins(0, 0, 0, 0);
+
+    QHBoxLayout *unstagedHeaderLayout = new QHBoxLayout();
     unstagedHeaderLayout->addWidget(new QLabel("<b>Unstaged Changes</b>"));
     unstagedHeaderLayout->addStretch();
     m_refreshStatusButton = new QPushButton("Refresh", stagingArea);
@@ -126,12 +128,12 @@ QWidget* ProjectWindow::createChangesTab()
     m_stageAllButton = new QPushButton("Stage All", stagingArea);
     unstagedHeaderLayout->addWidget(m_stageAllButton);
     stagingLayout->addLayout(unstagedHeaderLayout);
-    
+
     m_unstagedFilesList = new QListWidget(stagingArea);
     m_unstagedFilesList->setContextMenuPolicy(Qt::CustomContextMenu);
     stagingLayout->addWidget(m_unstagedFilesList);
-    
-    QHBoxLayout* stagedHeaderLayout = new QHBoxLayout();
+
+    QHBoxLayout *stagedHeaderLayout = new QHBoxLayout();
     stagedHeaderLayout->addWidget(new QLabel("<b>Staged Changes (Index)</b>"));
     stagedHeaderLayout->addStretch();
     m_unstageAllButton = new QPushButton("Unstage All", stagingArea);
@@ -141,21 +143,21 @@ QWidget* ProjectWindow::createChangesTab()
     m_stagedFilesList = new QListWidget(stagingArea);
     m_stagedFilesList->setContextMenuPolicy(Qt::CustomContextMenu);
     stagingLayout->addWidget(m_stagedFilesList);
-    
+
     splitter->addWidget(stagingArea);
 
-    QWidget* commitArea = new QWidget(splitter);
-    QVBoxLayout* commitLayout = new QVBoxLayout(commitArea);
+    QWidget *commitArea = new QWidget(splitter);
+    QVBoxLayout *commitLayout = new QVBoxLayout(commitArea);
     commitLayout->addWidget(new QLabel("<b>Commit Message</b>"));
     m_commitMessageInput = new QTextEdit(commitArea);
     m_commitMessageInput->setPlaceholderText("Enter a summary of your changes...");
     m_commitMessageInput->setMaximumHeight(100);
     commitLayout->addWidget(m_commitMessageInput);
-    
+
     std::string branchName;
     m_commitButton = new QPushButton("Commit to " + QString::fromStdString(m_gitBackend.getCurrentBranch(branchName)), this);
     commitLayout->addWidget(m_commitButton);
-    
+
     splitter->addWidget(commitArea);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 1);
@@ -225,7 +227,7 @@ void ProjectWindow::setupUi()
     m_groupChatDisplay = new QTextEdit(this);
     m_groupChatDisplay->setReadOnly(true);
     collabLayout->addWidget(m_groupChatDisplay, 1);
-    QHBoxLayout* chatInputLayout = new QHBoxLayout();
+    QHBoxLayout *chatInputLayout = new QHBoxLayout();
     m_groupChatInput = new QLineEdit(this);
     m_groupChatInput->setPlaceholderText("Type message to group...");
     m_groupChatSendButton = new QPushButton("Send");
@@ -254,35 +256,37 @@ void ProjectWindow::updateStatus()
 
 void ProjectWindow::updateGroupMembers()
 {
-    if (!m_networkManager) return;
-    
+    if (!m_networkManager)
+        return;
+
     m_repoInfo = m_repoManager->getRepositoryInfo(m_appId);
-    if (!m_repoInfo.isValid()) return;
+    if (!m_repoInfo.isValid())
+        return;
 
     m_groupMembersList->clear();
     QList<QString> connectedPeers = m_networkManager->getConnectedPeerIds();
-    
+
     QStringList members = m_repoInfo.groupMembers;
     members.removeDuplicates();
     members.sort();
 
-    for (const QString& member : members) {
-        QListWidgetItem* item = new QListWidgetItem(m_groupMembersList);
+    for (const QString &member : members)
+    {
+        QListWidgetItem *item = new QListWidgetItem(m_groupMembersList);
         bool isConnected = connectedPeers.contains(member) || (member == m_networkManager->getMyUsername());
-        
+
         item->setText(member + (member == m_repoInfo.ownerPeerId ? " (owner)" : ""));
         item->setIcon(isConnected ? style()->standardIcon(QStyle::SP_DialogYesButton) : style()->standardIcon(QStyle::SP_DialogCancelButton));
         item->setForeground(isConnected ? palette().color(QPalette::Text) : QColor("grey"));
         item->setData(Qt::UserRole, member);
     }
-    
+
     m_addCollaboratorButton->setVisible(m_repoInfo.isOwner);
     m_removeCollaboratorButton->setVisible(m_repoInfo.isOwner);
     onGroupMemberSelectionChanged();
 }
 
-
-void ProjectWindow::displayGroupMessage(const QString& peerId, const QString& message)
+void ProjectWindow::displayGroupMessage(const QString &peerId, const QString &message)
 {
     QString myUsername = m_networkManager ? m_networkManager->getMyUsername() : "";
     QString formattedMessage = QString("<b>%1:</b> %2")
@@ -294,7 +298,8 @@ void ProjectWindow::displayGroupMessage(const QString& peerId, const QString& me
 void ProjectWindow::onSendGroupMessageClicked()
 {
     QString message = m_groupChatInput->text().trimmed();
-    if (message.isEmpty()) return;
+    if (message.isEmpty())
+        return;
     emit groupMessageSent(m_repoInfo.ownerRepoAppId, message);
     m_groupChatInput->clear();
 }
@@ -306,8 +311,9 @@ void ProjectWindow::onAddCollaboratorClicked()
 
 void ProjectWindow::onRemoveCollaboratorClicked()
 {
-    QListWidgetItem* selectedItem = m_groupMembersList->currentItem();
-    if (!selectedItem) return;
+    QListWidgetItem *selectedItem = m_groupMembersList->currentItem();
+    if (!selectedItem)
+        return;
     QString peerIdToRemove = selectedItem->data(Qt::UserRole).toString();
     emit removeCollaboratorRequested(m_appId, peerIdToRemove);
 }
@@ -315,10 +321,12 @@ void ProjectWindow::onRemoveCollaboratorClicked()
 void ProjectWindow::onGroupMemberSelectionChanged()
 {
     bool canRemove = false;
-    QListWidgetItem* selectedItem = m_groupMembersList->currentItem();
-    if (selectedItem && m_repoInfo.isOwner) {
+    QListWidgetItem *selectedItem = m_groupMembersList->currentItem();
+    if (selectedItem && m_repoInfo.isOwner)
+    {
         QString peerId = selectedItem->data(Qt::UserRole).toString();
-        if (peerId != m_repoInfo.ownerPeerId) {
+        if (peerId != m_repoInfo.ownerPeerId)
+        {
             canRemove = true;
         }
     }
@@ -338,13 +346,17 @@ void ProjectWindow::refreshBranches()
 void ProjectWindow::checkoutBranch()
 {
     QString branchName = m_branchComboBox->currentText();
-    if (branchName.isEmpty()) return;
+    if (branchName.isEmpty())
+        return;
     std::string error;
-    if (m_gitBackend.checkoutBranch(branchName.toStdString(), error)) {
-        QMessageBox::information(this, "Success", "Checked out branch: " + branchName);
+    if (m_gitBackend.checkoutBranch(branchName.toStdString(), error))
+    {
+        CustomMessageBox::information(this, "Success", "Checked out branch: " + branchName);
         updateStatus();
-    } else {
-        QMessageBox::warning(this, "Checkout Failed", QString::fromStdString(error));
+    }
+    else
+    {
+        CustomMessageBox::warning(this, "Checkout Failed", QString::fromStdString(error));
     }
 }
 
@@ -359,19 +371,22 @@ void ProjectWindow::loadCommitLog(const std::string &ref)
     std::string error;
     auto log = m_gitBackend.getCommitLog(100, error, ref);
 
-    if (!error.empty() && log.empty()) {
-        QListWidgetItem* item = new QListWidgetItem(m_commitLogDisplay);
+    if (!error.empty() && log.empty())
+    {
+        QListWidgetItem *item = new QListWidgetItem(m_commitLogDisplay);
         item->setText("Error: " + QString::fromStdString(error));
         item->setForeground(Qt::red);
         return;
     }
-    if (log.empty()) {
+    if (log.empty())
+    {
         new QListWidgetItem("No commits found for this reference.", m_commitLogDisplay);
         return;
     }
-    for (const auto &commit : log) {
-        QListWidgetItem* item = new QListWidgetItem(m_commitLogDisplay);
-        CommitWidget* commitWidget = new CommitWidget(commit, m_commitLogDisplay);
+    for (const auto &commit : log)
+    {
+        QListWidgetItem *item = new QListWidgetItem(m_commitLogDisplay);
+        CommitWidget *commitWidget = new CommitWidget(commit, m_commitLogDisplay);
         item->setSizeHint(commitWidget->sizeHint());
         m_commitLogDisplay->setItemWidget(item, commitWidget);
         connect(commitWidget, &CommitWidget::viewFilesClicked, this, &ProjectWindow::onViewFilesClicked);
@@ -383,33 +398,38 @@ void ProjectWindow::loadBranchList()
     m_branchComboBox->clear();
     std::string error;
     auto branches = m_gitBackend.listBranches(GitBackend::BranchType::ALL, error);
-    for (const auto &branch : branches) {
+    for (const auto &branch : branches)
+    {
         if (QString::fromStdString(branch).endsWith("/HEAD"))
             continue;
         m_branchComboBox->addItem(QString::fromStdString(branch));
     }
     std::string currentBranch = m_gitBackend.getCurrentBranch(error);
     int index = m_branchComboBox->findText(QString::fromStdString(currentBranch));
-    if (index != -1) {
+    if (index != -1)
+    {
         m_branchComboBox->setCurrentIndex(index);
     }
 }
 
-void ProjectWindow::onViewFilesClicked(const QString& sha)
+void ProjectWindow::onViewFilesClicked(const QString &sha)
 {
-    if (sha.isEmpty()) {
-        QMessageBox::warning(this, "Error", "Could not retrieve commit SHA.");
+    if (sha.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Error", "Could not retrieve commit SHA.");
         return;
     }
     QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) +
                        "/SyncIt_View/" + QFileInfo(m_repoInfo.localPath).fileName() + "_" + sha.left(7);
     QDir tempDir(tempPath);
-    if (tempDir.exists()) {
+    if (tempDir.exists())
+    {
         QDesktopServices::openUrl(QUrl::fromLocalFile(tempPath));
         return;
     }
-    if (!tempDir.mkpath(".")) {
-        QMessageBox::critical(this, "Error", "Could not create temporary directory to view files.");
+    if (!tempDir.mkpath("."))
+    {
+        CustomMessageBox::critical(this, "Error", "Could not create temporary directory to view files.");
         return;
     }
 
@@ -422,21 +442,23 @@ void ProjectWindow::onViewFilesClicked(const QString& sha)
     gitProcess.setStandardOutputProcess(&tarProcess);
     gitProcess.start("git", args);
     tarProcess.start("tar", QStringList() << "-x");
-    if (!gitProcess.waitForFinished(-1) || !tarProcess.waitForFinished(-1)) {
-        QMessageBox::critical(this, "Checkout Failed", "Could not archive and extract the specific commit.");
+    if (!gitProcess.waitForFinished(-1) || !tarProcess.waitForFinished(-1))
+    {
+        CustomMessageBox::critical(this, "Checkout Failed", "Could not archive and extract the specific commit.");
         tempDir.removeRecursively();
         return;
     }
-    QMessageBox::information(this, "Opening Files", 
-        QString("Checked out commit %1 in a temporary folder.\n\nPath: %2\n\nThis folder can be safely deleted when you are done.")
-        .arg(sha.left(7), tempPath));
+    CustomMessageBox::information(this, "Opening Files",
+                                  QString("Checked out commit %1 in a temporary folder.\n\nPath: %2\n\nThis folder can be safely deleted when you are done.")
+                                      .arg(sha.left(7), tempPath));
     QDesktopServices::openUrl(QUrl::fromLocalFile(tempPath));
 }
 
 void ProjectWindow::onFetchClicked()
 {
-    if (m_repoInfo.isOwner) {
-        QMessageBox::information(this, "Fetch", "You are the owner of this repository. There is no remote to fetch from.");
+    if (m_repoInfo.isOwner)
+    {
+        CustomMessageBox::information(this, "Fetch", "You are the owner of this repository. There is no remote to fetch from.");
         return;
     }
     m_fetchButton->setEnabled(false);
@@ -446,14 +468,16 @@ void ProjectWindow::onFetchClicked()
 
 void ProjectWindow::onProposeChangesClicked()
 {
-    if (m_repoInfo.isOwner) {
-        QMessageBox::information(this, "Action Not Available", "You are the owner. You commit directly, you don't need to propose changes.");
+    if (m_repoInfo.isOwner)
+    {
+        CustomMessageBox::information(this, "Action Not Available", "You are the owner. You commit directly, you don't need to propose changes.");
         return;
     }
     std::string error;
     std::string currentBranch = m_gitBackend.getCurrentBranch(error);
-    if (currentBranch.empty() || currentBranch.rfind("[Detached HEAD", 0) == 0) {
-        QMessageBox::warning(this, "Cannot Propose", "You must be on a branch to propose changes.");
+    if (currentBranch.empty() || currentBranch.rfind("[Detached HEAD", 0) == 0)
+    {
+        CustomMessageBox::warning(this, "Cannot Propose", "You must be on a branch to propose changes.");
         return;
     }
     m_proposeChangesButton->setEnabled(false);
@@ -465,17 +489,21 @@ void ProjectWindow::handleFetchBundleCompleted(const QString &repoName, const QS
 {
     m_fetchButton->setEnabled(true);
     m_fetchButton->setText("Fetch");
-    if (!success) {
-        QMessageBox::warning(this, "Fetch Failed", QString("Could not retrieve updates from owner: %1").arg(message));
+    if (!success)
+    {
+        CustomMessageBox::warning(this, "Fetch Failed", QString("Could not retrieve updates from owner: %1").arg(message));
         QFile::remove(localBundlePath);
         return;
     }
     std::string error;
-    if (m_gitBackend.fetchFromBundle(localBundlePath.toStdString(), error)) {
-        QMessageBox::information(this, "Fetch Successful", "Successfully fetched updates from the owner.");
+    if (m_gitBackend.fetchFromBundle(localBundlePath.toStdString(), error))
+    {
+        CustomMessageBox::information(this, "Fetch Successful", "Successfully fetched updates from the owner.");
         loadBranchList();
-    } else {
-        QMessageBox::warning(this, "Fetch Failed", QString("Could not apply updates from bundle:\n%1").arg(QString::fromStdString(error)));
+    }
+    else
+    {
+        CustomMessageBox::warning(this, "Fetch Failed", QString("Could not apply updates from bundle:\n%1").arg(QString::fromStdString(error)));
     }
     QFile::remove(localBundlePath);
 }
@@ -484,54 +512,69 @@ void ProjectWindow::refreshStatus()
 {
     m_unstagedFilesList->clear();
     m_stagedFilesList->clear();
-    
+
     std::string error;
     std::vector<FileStatus> statuses = m_gitBackend.getRepositoryStatus(error);
 
-    if (!error.empty()) {
-        QMessageBox::warning(this, "Status Error", QString::fromStdString(error));
+    if (!error.empty())
+    {
+        CustomMessageBox::warning(this, "Status Error", QString::fromStdString(error));
         return;
     }
-    
-    for (const auto& fs : statuses) {
+
+    for (const auto &fs : statuses)
+    {
         QString path = QString::fromStdString(fs.path);
-        if (fs.git_status & (GIT_STATUS_WT_NEW | GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE | GIT_STATUS_WT_RENAMED)) {
+        if (fs.git_status & (GIT_STATUS_WT_NEW | GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE | GIT_STATUS_WT_RENAMED))
+        {
             new QListWidgetItem(path, m_unstagedFilesList);
         }
-        if (fs.git_status & (GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE)) {
+        if (fs.git_status & (GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED | GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE))
+        {
             new QListWidgetItem(path, m_stagedFilesList);
         }
     }
 }
 
-void ProjectWindow::onFileContextMenuRequested(const QPoint& pos)
+void ProjectWindow::onFileContextMenuRequested(const QPoint &pos)
 {
-    QListWidget* listWidget = qobject_cast<QListWidget*>(sender());
-    if (!listWidget) return;
+    QListWidget *listWidget = qobject_cast<QListWidget *>(sender());
+    if (!listWidget)
+        return;
 
-    QListWidgetItem* item = listWidget->itemAt(pos);
-    if (!item) return;
+    QListWidgetItem *item = listWidget->itemAt(pos);
+    if (!item)
+        return;
 
     QMenu contextMenu(this);
-    if (listWidget == m_unstagedFilesList) {
+    if (listWidget == m_unstagedFilesList)
+    {
         contextMenu.addAction("Stage this file");
-    } else {
+    }
+    else
+    {
         contextMenu.addAction("Unstage this file");
     }
 
-    QAction* selectedAction = contextMenu.exec(listWidget->mapToGlobal(pos));
-    if (!selectedAction) return;
+    QAction *selectedAction = contextMenu.exec(listWidget->mapToGlobal(pos));
+    if (!selectedAction)
+        return;
 
     std::string path = item->text().toStdString();
     std::string error;
 
-    if (selectedAction->text() == "Stage this file") {
-        if (!m_gitBackend.stagePath(path, error)) {
-             QMessageBox::warning(this, "Error", QString::fromStdString(error));
+    if (selectedAction->text() == "Stage this file")
+    {
+        if (!m_gitBackend.stagePath(path, error))
+        {
+            CustomMessageBox::warning(this, "Error", QString::fromStdString(error));
         }
-    } else {
-        if (!m_gitBackend.unstagePath(path, error)) {
-            QMessageBox::warning(this, "Error", QString::fromStdString(error));
+    }
+    else
+    {
+        if (!m_gitBackend.unstagePath(path, error))
+        {
+            CustomMessageBox::warning(this, "Error", QString::fromStdString(error));
         }
     }
     refreshStatus();
@@ -540,8 +583,9 @@ void ProjectWindow::onFileContextMenuRequested(const QPoint& pos)
 void ProjectWindow::onStageAllClicked()
 {
     std::string error;
-    if (!m_gitBackend.stageAll(error)) {
-        QMessageBox::warning(this, "Error", QString::fromStdString(error));
+    if (!m_gitBackend.stageAll(error))
+    {
+        CustomMessageBox::warning(this, "Error", QString::fromStdString(error));
     }
     refreshStatus();
 }
@@ -549,8 +593,9 @@ void ProjectWindow::onStageAllClicked()
 void ProjectWindow::onUnstageAllClicked()
 {
     std::string error;
-    if(!m_gitBackend.unstageAll(error)) {
-        QMessageBox::warning(this, "Error", QString::fromStdString(error));
+    if (!m_gitBackend.unstageAll(error))
+    {
+        CustomMessageBox::warning(this, "Error", QString::fromStdString(error));
     }
     refreshStatus();
 }
@@ -558,13 +603,15 @@ void ProjectWindow::onUnstageAllClicked()
 void ProjectWindow::onCommitClicked()
 {
     QString message = m_commitMessageInput->toPlainText().trimmed();
-    if (message.isEmpty()) {
-        QMessageBox::warning(this, "Commit Failed", "Please enter a commit message.");
+    if (message.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Commit Failed", "Please enter a commit message.");
         return;
     }
 
-    if (m_stagedFilesList->count() == 0) {
-        QMessageBox::warning(this, "Commit Failed", "There are no staged files to commit.");
+    if (m_stagedFilesList->count() == 0)
+    {
+        CustomMessageBox::warning(this, "Commit Failed", "There are no staged files to commit.");
         return;
     }
 
@@ -572,12 +619,15 @@ void ProjectWindow::onCommitClicked()
     std::string email = name + "@syncit.p2p";
     std::string error;
 
-    if (m_gitBackend.commitChanges(message.toStdString(), name, email, error)) {
-        QMessageBox::information(this, "Success", "Commit created successfully.");
+    if (m_gitBackend.commitChanges(message.toStdString(), name, email, error))
+    {
+        CustomMessageBox::information(this, "Success", "Commit created successfully.");
         m_commitMessageInput->clear();
         refreshStatus();
         loadCommitLog();
-    } else {
-        QMessageBox::critical(this, "Commit Failed", QString::fromStdString(error));
+    }
+    else
+    {
+        CustomMessageBox::critical(this, "Commit Failed", QString::fromStdString(error));
     }
 }

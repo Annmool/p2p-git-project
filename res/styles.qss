@@ -164,3 +164,126 @@ QLabel#repoNameLabel {
 QLabel#repoDetailLabel {
     color: #64748B; /* slate-500 */
 }
+
+/* === Custom Dialog Styling === */
+CustomMessageBox, CustomFileDialog, CustomInputDialog, CustomProgressDialog {
+    background-color: #FFFFFF;
+    border: 2px solid #CBD5E1;
+    border-radius: 12px;
+}
+
+/* Custom dialog title bar simulation */
+CustomMessageBox QLabel[objectName="titleLabel"], 
+CustomFileDialog QLabel[objectName="titleLabel"],
+CustomInputDialog QLabel[objectName="titleLabel"],
+CustomProgressDialog QLabel[objectName="titleLabel"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    font-weight: bold;
+    padding: 12px 16px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    margin: 0px;
+}
+
+/* Enhanced button styling for dialogs */
+CustomMessageBox QPushButton, 
+CustomFileDialog QPushButton,
+CustomInputDialog QPushButton,
+CustomProgressDialog QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-width: 90px;
+    min-height: 32px;
+}
+
+CustomMessageBox QPushButton:hover, 
+CustomFileDialog QPushButton:hover,
+CustomInputDialog QPushButton:hover,
+CustomProgressDialog QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+CustomMessageBox QPushButton#primaryButton, 
+CustomFileDialog QPushButton#primaryButton,
+CustomInputDialog QPushButton#primaryButton {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: bold;
+}
+
+CustomMessageBox QPushButton#primaryButton:hover, 
+CustomFileDialog QPushButton#primaryButton:hover,
+CustomInputDialog QPushButton#primaryButton:hover {
+    background-color: #14625F;
+}
+
+/* File dialog specific styling */
+CustomFileDialog QTreeView {
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    background-color: #FFFFFF;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    gridline-color: #E2E8F0;
+}
+
+CustomFileDialog QTreeView::item {
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+}
+
+CustomFileDialog QTreeView::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+CustomFileDialog QTreeView::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Progress dialog specific styling */
+CustomProgressDialog QProgressBar {
+    border: 2px solid #CBD5E1;
+    border-radius: 8px;
+    background-color: #F8FAFC;
+    text-align: center;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 12px;
+    color: #334155;
+    font-weight: 500;
+    min-height: 20px;
+}
+
+CustomProgressDialog QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                               stop:0 #0F4C4A, stop:1 #14625F);
+    border-radius: 6px;
+    margin: 2px;
+}
+
+/* Input dialog specific styling */
+CustomInputDialog QLineEdit {
+    border: 2px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 12px;
+    background-color: #FFFFFF;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    font-weight: 500;
+}
+
+CustomInputDialog QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}

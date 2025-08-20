@@ -6,6 +6,7 @@
 #include "repository_manager.h"
 #include "network_manager.h"
 #include "git_backend.h"
+#include "custom_dialogs.h"
 
 #include <QVBoxLayout>
 #include <QStackedWidget>
@@ -37,9 +38,13 @@ QIcon createTintedIcon(const QString &resourcePath, const QColor &color)
 
     QPixmap pixmap(renderer.defaultSize());
     pixmap.fill(Qt::transparent);
+
+    // First paint the SVG
     QPainter painter(&pixmap);
     renderer.render(&painter);
+    painter.end(); // End the first painter before starting the mask painter
 
+    // Then apply the color mask
     QPainter maskPainter(&pixmap);
     maskPainter.setCompositionMode(QPainter::CompositionMode_SourceIn);
     maskPainter.fillRect(pixmap.rect(), color);
@@ -60,7 +65,7 @@ MainWindow::MainWindow(QWidget *parent)
     {
         name_prompt_default = "Peer" + QString::number(QRandomGenerator::global()->bounded(10000));
     }
-    m_myUsername = QInputDialog::getText(this, "Enter Peer Name", "Peer Name:", QLineEdit::Normal, name_prompt_default, &ok_name);
+    m_myUsername = CustomInputDialog::getText(this, "Enter Peer Name", "Peer Name:", name_prompt_default, &ok_name);
     if (!ok_name || m_myUsername.isEmpty())
     {
         m_myUsername = name_prompt_default;
@@ -69,7 +74,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_identityManager = new IdentityManager(m_myUsername);
     if (!m_identityManager->initializeKeys())
     {
-        QMessageBox::critical(this, "Identity Error", "Failed to initialize cryptographic keys! The application will now close.");
+        CustomMessageBox::critical(this, "Identity Error", "Failed to initialize cryptographic keys! The application will now close.");
         QTimer::singleShot(0, this, &QWidget::close);
         return;
     }
@@ -272,10 +277,10 @@ void MainWindow::handleFetchBundleRequest(const QString &ownerPeerId, const QStr
     DiscoveredPeerInfo providerPeerInfo = m_networkManager->getDiscoveredPeerInfo(ownerPeerId);
     if (providerPeerInfo.id.isEmpty())
     {
-        QMessageBox::critical(this, "Connection Error", "Could not find the repository owner. They may be offline.");
+        CustomMessageBox::critical(this, "Connection Error", "Could not find the repository owner. They may be offline.");
         return;
     }
-    m_networkManager->connectAndRequestBundle(providerPeerInfo.address, providerPeerInfo.tcpPort, m_myUsername, repoDisplayName, "");
+    m_networkManager->requestBundleFromPeer(ownerPeerId, repoDisplayName, "");
 }
 
 void MainWindow::handleProposeChangesRequest(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch)
@@ -283,7 +288,7 @@ void MainWindow::handleProposeChangesRequest(const QString &ownerPeerId, const Q
     QTcpSocket *ownerSocket = m_networkManager->getSocketForPeer(ownerPeerId);
     if (!ownerSocket)
     {
-        QMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(ownerPeerId));
+        CustomMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(ownerPeerId));
         return;
     }
 
@@ -306,22 +311,22 @@ void MainWindow::handleProposeChangesRequest(const QString &ownerPeerId, const Q
         if (backend.createDiffBundle(bundlePath.toStdString(), fromBranch.toStdString(), "origin/main", error))
         {
             m_networkManager->sendChangeProposal(ownerSocket, repoDisplayName, fromBranch, bundlePath);
-            QMessageBox::information(this, "Proposal Sent", "Your changes have been sent to the owner for review.");
+            CustomMessageBox::information(this, "Proposal Sent", "Your changes have been sent to the owner for review.");
         }
         else
         {
-            QMessageBox::warning(this, "Failed to Propose", QString::fromStdString(error));
+            CustomMessageBox::warning(this, "Failed to Propose", QString::fromStdString(error));
         }
     }
 }
 
 void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath)
 {
-    int ret = QMessageBox::question(this, "Change Proposal Received",
-                                    QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nDo you want to review and merge these changes?").arg(fromPeer, repoName, forBranch),
-                                    QMessageBox::Yes | QMessageBox::No);
+    CustomMessageBox::StandardButton ret = CustomMessageBox::question(this, "Change Proposal Received",
+                                                                      QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nDo you want to review and merge these changes?").arg(fromPeer, repoName, forBranch),
+                                                                      CustomMessageBox::Yes | CustomMessageBox::No);
 
-    if (ret == QMessageBox::No)
+    if (ret == CustomMessageBox::No)
     {
         QFile::remove(bundlePath);
         return;
@@ -339,7 +344,7 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
 
     if (!repoInfo.isValid())
     {
-        QMessageBox::critical(this, "Error", "Received a change proposal for a repository you don't own or manage.");
+        CustomMessageBox::critical(this, "Error", "Received a change proposal for a repository you don't own or manage.");
         QFile::remove(bundlePath);
         return;
     }
@@ -348,14 +353,14 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
     std::string error;
     if (!backend.openRepository(repoInfo.localPath.toStdString(), error))
     {
-        QMessageBox::critical(this, "Error", "Could not open local repository to apply changes.");
+        CustomMessageBox::critical(this, "Error", "Could not open local repository to apply changes.");
         QFile::remove(bundlePath);
         return;
     }
 
     if (backend.applyBundle(bundlePath.toStdString(), error))
     {
-        QMessageBox::information(this, "Changes Merged", "The proposed changes have been successfully merged.");
+        CustomMessageBox::information(this, "Changes Merged", "The proposed changes have been successfully merged.");
         if (m_projectWindows.contains(repoInfo.appId))
         {
             m_projectWindows[repoInfo.appId]->updateStatus();
@@ -363,7 +368,7 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
     }
     else
     {
-        QMessageBox::critical(this, "Merge Failed", QString("Could not automatically merge changes. Please check the repository for conflicts.\n\nDetails: %1").arg(QString::fromStdString(error)));
+        CustomMessageBox::critical(this, "Merge Failed", QString("Could not automatically merge changes. Please check the repository for conflicts.\n\nDetails: %1").arg(QString::fromStdString(error)));
     }
 
     QFile::remove(bundlePath);
@@ -420,14 +425,11 @@ void MainWindow::handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QH
     }
     QString peerDisplay = !username.isEmpty() ? username + pkh : address.toString();
 
-    QMessageBox msgBox(this);
-    msgBox.setWindowTitle("Peer Connection Request");
-    msgBox.setText(QString("Peer '%1' at %2 wants to establish a connection with you.").arg(peerDisplay.toHtmlEscaped(), address.toString()));
-    msgBox.setInformativeText("Do you want to accept?");
-    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-    msgBox.setDefaultButton(QMessageBox::No);
+    CustomMessageBox::StandardButton result = CustomMessageBox::question(this, "Peer Connection Request",
+                                                                         QString("Peer '%1' at %2 wants to establish a connection with you.\n\nDo you want to accept?").arg(peerDisplay.toHtmlEscaped(), address.toString()),
+                                                                         CustomMessageBox::Yes | CustomMessageBox::No);
 
-    if (msgBox.exec() == QMessageBox::Yes)
+    if (result == CustomMessageBox::Yes)
     {
         if (m_networkManager && m_networkManager->isConnectionPending(socket))
         {
@@ -448,26 +450,32 @@ void MainWindow::handleAddManagedRepo(const QString &preselectedPath)
     QString dirPath = preselectedPath;
     if (dirPath.isEmpty())
     {
-        dirPath = QFileDialog::getExistingDirectory(this, "Select Git Repository Folder to Manage", QDir::homePath());
+        dirPath = CustomFileDialog::getExistingDirectory(this, "Select Git Repository Folder to Manage", QDir::homePath());
     }
     if (dirPath.isEmpty())
         return;
+
+    qDebug() << "Selected repository path:" << dirPath;
 
     GitBackend tempBackend;
     std::string error;
     if (!tempBackend.openRepository(dirPath.toStdString(), error))
     {
-        QMessageBox::warning(this, "Not a Git Repository", "The selected folder does not appear to be a valid Git repository.");
+        qDebug() << "Git backend error:" << QString::fromStdString(error);
+        CustomMessageBox::warning(this, "Not a Git Repository",
+                                  QString("The selected folder does not appear to be a valid Git repository.\n\nPath: %1\nError: %2")
+                                      .arg(dirPath)
+                                      .arg(QString::fromStdString(error)));
         return;
     }
 
     QString repoName = QFileInfo(dirPath).fileName();
     bool ok;
-    QString displayName = QInputDialog::getText(this, "Manage Repository", "Enter a display name:", QLineEdit::Normal, repoName, &ok);
+    QString displayName = CustomInputDialog::getText(this, "Manage Repository", "Enter a display name:", repoName, &ok);
     if (!ok || displayName.isEmpty())
         return;
 
-    bool isPublic = (QMessageBox::question(this, "Set Visibility", "Make this repository public for other peers to discover and clone?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes);
+    bool isPublic = (CustomMessageBox::question(this, "Set Visibility", "Make this repository public for other peers to discover and clone?", CustomMessageBox::Yes | CustomMessageBox::No) == CustomMessageBox::Yes);
 
     if (m_repoManager->addManagedRepository(displayName, dirPath, isPublic, m_myUsername, "", {m_myUsername}, true))
     {
@@ -540,18 +548,18 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
 
     if (m_repoManager->getCloneInfoByOwnerAndDisplayName(peerId, repoName).isValid())
     {
-        QMessageBox::information(this, "Already Cloned", "You appear to have already cloned this repository.");
+        CustomMessageBox::information(this, "Already Cloned", "You appear to have already cloned this repository.");
         return;
     }
 
-    QString localClonePathBase = QFileDialog::getExistingDirectory(this, "Select Base Directory to Clone Into", QDir::homePath() + "/P2P_Clones");
+    QString localClonePathBase = CustomFileDialog::getExistingDirectory(this, "Select Base Directory to Clone Into", QDir::homePath() + "/P2P_Clones");
     if (localClonePathBase.isEmpty())
         return;
 
     QString fullLocalClonePath = QDir(localClonePathBase).filePath(repoName);
     if (QDir(fullLocalClonePath).exists())
     {
-        QMessageBox::warning(this, "Directory Exists", "The target directory already exists.");
+        CustomMessageBox::warning(this, "Directory Exists", "The target directory already exists.");
         return;
     }
 
@@ -562,13 +570,13 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
     DiscoveredPeerInfo providerPeerInfo = m_networkManager->getDiscoveredPeerInfo(peerId);
     if (providerPeerInfo.id.isEmpty())
     {
-        QMessageBox::critical(this, "Connection Error", "Could not find peer info. They may have gone offline.");
+        CustomMessageBox::critical(this, "Connection Error", "Could not find peer info. They may have gone offline.");
         m_pendingCloneRequest.clear();
         return;
     }
 
     m_networkPanel->logMessage(QString("Initiating clone for '%1' from '%2'...").arg(repoName, peerId), "blue");
-    m_networkManager->connectAndRequestBundle(providerPeerInfo.address, providerPeerInfo.tcpPort, m_myUsername, repoName, fullLocalClonePath);
+    m_networkManager->requestBundleFromPeer(peerId, repoName, fullLocalClonePath);
 }
 
 void MainWindow::handleToggleDiscovery()

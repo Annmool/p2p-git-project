@@ -25,6 +25,7 @@ add_executable(${PROJECT_NAME}
     dashboard_panel.cpp
     network_panel.cpp
     project_window.cpp
+    custom_dialogs.cpp
     res/res.qrc
 )
 

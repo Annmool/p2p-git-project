@@ -41,6 +41,7 @@ public:
     quint16 getTcpServerPort() const;
     bool connectToTcpPeer(const QHostAddress &hostAddress, quint16 port, const QString &expectedPeerUsername);
     void connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath);
+    void requestBundleFromPeer(const QString &peerId, const QString &repoName, const QString &localPath);
     void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
     void sendEncryptedMessage(QTcpSocket *socket, const QString &messageType, const QVariantMap &payload);
     void disconnectAllTcpPeers();
@@ -53,7 +54,7 @@ public:
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
-    void sendChangeProposal(QTcpSocket* targetPeerSocket, const QString& repoDisplayName, const QString& fromBranch, const QString& bundlePath);
+    void sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
@@ -78,7 +79,7 @@ signals:
     void secureMessageReceived(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void collaboratorRemovedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
-    void changeProposalReceived(const QString& fromPeer, const QString& repoName, const QString& forBranch, const QString& bundlePath);
+    void changeProposalReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes); // <<< ADDED THIS LINE
 
 private slots:
@@ -93,7 +94,11 @@ private slots:
 private:
     struct IncomingFileTransfer
     {
-        enum TransferState { Receiving, Completed };
+        enum TransferState
+        {
+            Receiving,
+            Completed
+        };
         TransferState state = Receiving;
         QString repoName;
         QString tempLocalPath;
