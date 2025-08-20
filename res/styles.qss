@@ -287,3 +287,224 @@ CustomInputDialog QLineEdit:focus {
     border: 2px solid #0F4C4A;
     background-color: #F8FAFC;
 }
+
+/* === Project Window Styling === */
+ProjectWindow {
+    background-color: #F8FAFC;
+}
+
+ProjectWindow QTabWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+
+ProjectWindow QTabWidget::pane {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    top: -1px;
+}
+
+ProjectWindow QTabWidget::tab-bar {
+    left: 10px;
+}
+
+ProjectWindow QTabBar::tab {
+    background-color: #F1F5F9;
+    color: #64748B;
+    padding: 12px 24px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border: 1px solid #E2E8F0;
+    border-bottom: none;
+    margin-right: 2px;
+    font-weight: 500;
+    min-width: 100px;
+}
+
+ProjectWindow QTabBar::tab:selected {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    font-weight: 600;
+    border-color: #0F4C4A;
+}
+
+ProjectWindow QTabBar::tab:hover:!selected {
+    background-color: #E2E8F0;
+    color: #334155;
+}
+
+ProjectWindow QLabel {
+    color: #334155;
+    font-weight: 500;
+}
+
+ProjectWindow QLabel[objectName="statusLabel"] {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+/* Project Window Buttons */
+ProjectWindow QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-height: 32px;
+}
+
+ProjectWindow QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+ProjectWindow QPushButton:pressed {
+    background-color: #CBD5E1;
+}
+
+/* Primary action buttons */
+ProjectWindow QPushButton[objectName="commitButton"],
+ProjectWindow QPushButton[objectName="fetchButton"],
+ProjectWindow QPushButton[objectName="proposeChangesButton"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 600;
+}
+
+ProjectWindow QPushButton[objectName="commitButton"]:hover,
+ProjectWindow QPushButton[objectName="fetchButton"]:hover,
+ProjectWindow QPushButton[objectName="proposeChangesButton"]:hover {
+    background-color: #14625F;
+}
+
+/* List widgets in project window */
+ProjectWindow QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    padding: 4px;
+}
+
+ProjectWindow QListWidget::item {
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+    border-radius: 4px;
+    margin: 2px;
+}
+
+ProjectWindow QListWidget::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+ProjectWindow QListWidget::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Text edits in project window */
+ProjectWindow QTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+    selection-background-color: #E0F2FE;
+}
+
+ProjectWindow QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+}
+
+ProjectWindow QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}
+
+/* Combo boxes in project window */
+ProjectWindow QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+    min-width: 120px;
+}
+
+ProjectWindow QComboBox:hover {
+    border-color: #94A3B8;
+}
+
+ProjectWindow QComboBox:focus {
+    border: 2px solid #0F4C4A;
+}
+
+ProjectWindow QComboBox::drop-down {
+    border: none;
+    width: 30px;
+}
+
+ProjectWindow QComboBox::down-arrow {
+    image: none;
+    border: 4px solid transparent;
+    border-top: 6px solid #64748B;
+    margin-right: 6px;
+}
+
+ProjectWindow QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    padding: 4px;
+}
+
+/* Commit widgets styling */
+CommitWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+CommitWidget:hover {
+    border-color: #CBD5E1;
+    background-color: #F8FAFC;
+}
+
+CommitWidget QPushButton {
+    background-color: #F1F5F9;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #475569;
+}
+
+CommitWidget QPushButton:hover {
+    background-color: #E2E8F0;
+    color: #334155;
+}

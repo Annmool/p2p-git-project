@@ -496,11 +496,11 @@ void MainWindow::handleModifyRepoAccess(const QString &appId)
     ManagedRepositoryInfo repoInfo = m_repoManager->getRepositoryInfo(appId);
     if (!repoInfo.isOwner)
     {
-        QMessageBox::warning(this, "Access Denied", "Only the owner can modify access.");
+        CustomMessageBox::warning(this, "Access Denied", "Only the owner can modify access.");
         return;
     }
     bool makePublic = !repoInfo.isPublic;
-    if (QMessageBox::question(this, "Confirm Access Change", QString("Change access for '%1' to %2?").arg(repoInfo.displayName, makePublic ? "Public" : "Private"), QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)
+    if (CustomMessageBox::question(this, "Confirm Access Change", QString("Change access for '%1' to %2?").arg(repoInfo.displayName, makePublic ? "Public" : "Private")) == CustomMessageBox::Yes)
     {
         m_repoManager->setRepositoryVisibility(appId, makePublic);
         m_networkManager->sendDiscoveryBroadcast();
@@ -517,7 +517,7 @@ void MainWindow::handleDeleteRepo(const QString &appId)
         m_dashboardPanel->logStatus("Error: Repository not found in managed list.", true);
         return;
     }
-    if (QMessageBox::question(this, "Confirm Deletion", QString("Are you sure you want to remove '%1' from your managed list? This will not delete local files.").arg(repoInfo.displayName), QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)
+    if (CustomMessageBox::question(this, "Confirm Deletion", QString("Are you sure you want to remove '%1' from your managed list? This will not delete local files.").arg(repoInfo.displayName)) == CustomMessageBox::Yes)
     {
         m_repoManager->removeManagedRepository(appId);
         m_networkManager->sendDiscoveryBroadcast();
@@ -531,7 +531,7 @@ void MainWindow::handleConnectToPeer(const QString &peerId)
     DiscoveredPeerInfo peerInfo = m_networkManager->getDiscoveredPeerInfo(peerId);
     if (peerInfo.id.isEmpty())
     {
-        QMessageBox::critical(this, "Error", "Could not find peer info. They may have gone offline.");
+        CustomMessageBox::critical(this, "Error", "Could not find peer info. They may have gone offline.");
         return;
     }
     m_networkPanel->logMessage("Initiating connection to peer '" + peerId + "'...", "blue");
@@ -542,7 +542,7 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
 {
     if (!m_networkManager || !m_repoManager)
     {
-        QMessageBox::critical(this, "Fatal Error", "Core services are not ready.");
+        CustomMessageBox::critical(this, "Fatal Error", "Core services are not ready.");
         return;
     }
 
@@ -597,7 +597,7 @@ void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString 
     QTcpSocket *peerSocket = m_networkManager->getSocketForPeer(peerIdToAdd);
     if (!peerSocket)
     {
-        QMessageBox::warning(this, "Connection Lost", QString("The connection to '%1' was lost.").arg(peerIdToAdd));
+        CustomMessageBox::warning(this, "Connection Lost", QString("The connection to '%1' was lost.").arg(peerIdToAdd));
         return;
     }
 
@@ -639,7 +639,7 @@ void MainWindow::handleAddCollaboratorFromPanel(const QString &peerId)
 {
     if (!m_networkManager || m_networkManager->getSocketForPeer(peerId) == nullptr)
     {
-        QMessageBox::warning(this, "Not Connected", "You must be connected to a peer to add them as a collaborator.");
+        CustomMessageBox::warning(this, "Not Connected", "You must be connected to a peer to add them as a collaborator.");
         return;
     }
 
@@ -657,12 +657,12 @@ void MainWindow::handleAddCollaboratorFromPanel(const QString &peerId)
 
     if (eligibleRepoNames.isEmpty())
     {
-        QMessageBox::information(this, "No Eligible Repositories", QString("You do not own any repositories that '%1' is not already a collaborator on.").arg(peerId));
+        CustomMessageBox::information(this, "No Eligible Repositories", QString("You do not own any repositories that '%1' is not already a collaborator on.").arg(peerId));
         return;
     }
 
     bool ok;
-    QString repoNameToAdd = QInputDialog::getItem(this, "Add Collaborator", QString("Select repository to add '%1' to:").arg(peerId), eligibleRepoNames, 0, false, &ok);
+    QString repoNameToAdd = CustomInputDialog::getItem(this, "Add Collaborator", QString("Select repository to add '%1' to:").arg(peerId), eligibleRepoNames, 0, false, &ok);
 
     if (ok && !repoNameToAdd.isEmpty())
     {
@@ -689,12 +689,12 @@ void MainWindow::handleAddCollaboratorFromProjectWindow(const QString &localAppI
 
     if (eligiblePeers.isEmpty())
     {
-        QMessageBox::information(this, "No Eligible Peers", "No new connected peers are available to add.");
+        CustomMessageBox::information(this, "No Eligible Peers", "No new connected peers are available to add.");
         return;
     }
 
     bool ok;
-    QString peerToAdd = QInputDialog::getItem(this, "Add Collaborator", QString("Select a peer to add to '%1':").arg(repoInfo.displayName), eligiblePeers, 0, false, &ok);
+    QString peerToAdd = CustomInputDialog::getItem(this, "Add Collaborator", QString("Select a peer to add to '%1':").arg(repoInfo.displayName), eligiblePeers, 0, false, &ok);
 
     if (ok && !peerToAdd.isEmpty())
     {
@@ -708,7 +708,7 @@ void MainWindow::handleRemoveCollaboratorFromProjectWindow(const QString &appId,
     if (!repoInfo.isOwner)
         return;
 
-    if (QMessageBox::question(this, "Confirm Removal", QString("Are you sure you want to remove '%1' from '%2'?").arg(peerIdToRemove, repoInfo.displayName), QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
+    if (CustomMessageBox::question(this, "Confirm Removal", QString("Are you sure you want to remove '%1' from '%2'?").arg(peerIdToRemove, repoInfo.displayName)) == CustomMessageBox::No)
     {
         return;
     }

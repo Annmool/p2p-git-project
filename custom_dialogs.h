@@ -14,6 +14,7 @@
 #include <QProgressBar>
 #include <QIcon>
 #include <QDir>
+#include <QComboBox>
 
 class CustomMessageBox : public QDialog
 {
@@ -161,6 +162,8 @@ public:
 
     static QString getText(QWidget *parent, const QString &title, const QString &label,
                            const QString &text = QString(), bool *ok = nullptr);
+    static QString getItem(QWidget *parent, const QString &title, const QString &label,
+                           const QStringList &items, int current = 0, bool editable = false, bool *ok = nullptr);
 
 public slots:
     void accept() override;
@@ -172,9 +175,11 @@ private:
     QVBoxLayout *m_mainLayout;
     QLabel *m_label;
     QLineEdit *m_lineEdit;
+    QComboBox *m_comboBox;
     QHBoxLayout *m_buttonLayout;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;
+    bool m_isItemMode;
 };
 
 class CustomProgressDialog : public QDialog

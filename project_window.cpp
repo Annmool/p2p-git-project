@@ -124,8 +124,10 @@ QWidget *ProjectWindow::createChangesTab()
     unstagedHeaderLayout->addWidget(new QLabel("<b>Unstaged Changes</b>"));
     unstagedHeaderLayout->addStretch();
     m_refreshStatusButton = new QPushButton("Refresh", stagingArea);
+    m_refreshStatusButton->setObjectName("refreshStatusButton");
     unstagedHeaderLayout->addWidget(m_refreshStatusButton);
     m_stageAllButton = new QPushButton("Stage All", stagingArea);
+    m_stageAllButton->setObjectName("stageAllButton");
     unstagedHeaderLayout->addWidget(m_stageAllButton);
     stagingLayout->addLayout(unstagedHeaderLayout);
 
@@ -137,6 +139,7 @@ QWidget *ProjectWindow::createChangesTab()
     stagedHeaderLayout->addWidget(new QLabel("<b>Staged Changes (Index)</b>"));
     stagedHeaderLayout->addStretch();
     m_unstageAllButton = new QPushButton("Unstage All", stagingArea);
+    m_unstageAllButton->setObjectName("unstageAllButton");
     stagedHeaderLayout->addWidget(m_unstageAllButton);
     stagingLayout->addLayout(stagedHeaderLayout);
 
@@ -156,6 +159,7 @@ QWidget *ProjectWindow::createChangesTab()
 
     std::string branchName;
     m_commitButton = new QPushButton("Commit to " + QString::fromStdString(m_gitBackend.getCurrentBranch(branchName)), this);
+    m_commitButton->setObjectName("commitButton");
     commitLayout->addWidget(m_commitButton);
 
     splitter->addWidget(commitArea);
@@ -184,6 +188,7 @@ void ProjectWindow::setupUi()
     // Setup History Tab
     QVBoxLayout *historyLayout = new QVBoxLayout(m_historyTab);
     m_statusLabel = new QLabel(this);
+    m_statusLabel->setObjectName("statusLabel");
     historyLayout->addWidget(m_statusLabel);
     m_commitLogDisplay = new QListWidget(this);
     m_commitLogDisplay->setAlternatingRowColors(true);
@@ -191,8 +196,11 @@ void ProjectWindow::setupUi()
     historyLayout->addWidget(m_commitLogDisplay, 1);
     QHBoxLayout *controlsLayout = new QHBoxLayout();
     m_refreshLogButton = new QPushButton("Refresh Log", this);
+    m_refreshLogButton->setObjectName("refreshLogButton");
     m_fetchButton = new QPushButton("Fetch", this);
+    m_fetchButton->setObjectName("fetchButton");
     m_proposeChangesButton = new QPushButton("Propose Changes", this);
+    m_proposeChangesButton->setObjectName("proposeChangesButton");
     m_branchComboBox = new QComboBox(this);
     m_refreshBranchesButton = new QPushButton("Refresh Branches", this);
     m_checkoutButton = new QPushButton("Checkout Branch", this);

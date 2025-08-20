@@ -678,7 +678,7 @@ QString CustomFileDialog::getExistingDirectory(QWidget *parent, const QString &c
 // ============================================================================
 
 CustomInputDialog::CustomInputDialog(QWidget *parent)
-    : QDialog(parent)
+    : QDialog(parent), m_isItemMode(false)
 {
     setModal(true);
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
@@ -696,6 +696,8 @@ void CustomInputDialog::setupUi()
 
     m_label = new QLabel();
     m_lineEdit = new QLineEdit();
+    m_comboBox = new QComboBox();
+    m_comboBox->hide(); // Initially hidden
 
     m_okButton = new QPushButton("OK");
     m_okButton->setObjectName("primaryButton");
@@ -707,10 +709,12 @@ void CustomInputDialog::setupUi()
 
     m_mainLayout->addWidget(m_label);
     m_mainLayout->addWidget(m_lineEdit);
+    m_mainLayout->addWidget(m_comboBox);
     m_mainLayout->addLayout(m_buttonLayout);
     m_mainLayout->setStretch(0, 0);
     m_mainLayout->setStretch(1, 0);
-    m_mainLayout->setStretch(2, 1);
+    m_mainLayout->setStretch(2, 0);
+    m_mainLayout->setStretch(3, 1);
 
     connect(m_okButton, &QPushButton::clicked, this, &CustomInputDialog::accept);
     connect(m_cancelButton, &QPushButton::clicked, this, &CustomInputDialog::reject);
@@ -780,7 +784,10 @@ void CustomInputDialog::setTextValue(const QString &text)
 
 QString CustomInputDialog::textValue() const
 {
-    return m_lineEdit->text();
+    if (m_isItemMode)
+        return m_comboBox->currentText();
+    else
+        return m_lineEdit->text();
 }
 
 void CustomInputDialog::accept()
@@ -799,6 +806,30 @@ QString CustomInputDialog::getText(QWidget *parent, const QString &title, const 
     dialog.setWindowTitle(title);
     dialog.setLabelText(label);
     dialog.setTextValue(text);
+
+    bool accepted = (dialog.exec() == QDialog::Accepted);
+    if (ok)
+    {
+        *ok = accepted;
+    }
+
+    return accepted ? dialog.textValue() : QString();
+}
+
+QString CustomInputDialog::getItem(QWidget *parent, const QString &title, const QString &label,
+                                   const QStringList &items, int current, bool editable, bool *ok)
+{
+    CustomInputDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    dialog.setLabelText(label);
+
+    // Switch to item mode
+    dialog.m_isItemMode = true;
+    dialog.m_lineEdit->hide();
+    dialog.m_comboBox->show();
+    dialog.m_comboBox->addItems(items);
+    dialog.m_comboBox->setCurrentIndex(current);
+    dialog.m_comboBox->setEditable(editable);
 
     bool accepted = (dialog.exec() == QDialog::Accepted);
     if (ok)
