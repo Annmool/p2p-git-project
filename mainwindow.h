@@ -34,34 +34,36 @@ public:
     ~MainWindow();
 
 public slots:
-    void handleFetchBundleRequest(const QString& ownerPeerId, const QString& repoDisplayName);
-    void handleProposeChangesRequest(const QString& ownerPeerId, const QString& repoDisplayName, const QString& fromBranch);
+    void handleFetchBundleRequest(const QString &ownerPeerId, const QString &repoDisplayName);
+    void handleProposeChangesRequest(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
     // --- Private Nested Class for User Profile Widget ---
-    class UserProfileWidget : public QWidget {
+    class UserProfileWidget : public QWidget
+    {
     public:
-        UserProfileWidget(const QString& username, QWidget* parent = nullptr) : QWidget(parent) {
+        UserProfileWidget(const QString &username, QWidget *parent = nullptr) : QWidget(parent)
+        {
             setObjectName("userProfileWidget");
-            QHBoxLayout* layout = new QHBoxLayout(this);
+            QHBoxLayout *layout = new QHBoxLayout(this);
             layout->setContentsMargins(8, 5, 8, 5);
             layout->setSpacing(10);
-            
-            QLabel* avatar = new QLabel(username.left(1).toUpper(), this);
+
+            QLabel *avatar = new QLabel(username.left(1).toUpper(), this);
             avatar->setObjectName("userAvatarLabel");
             avatar->setAlignment(Qt::AlignCenter);
 
-            QLabel* name = new QLabel(username, this);
+            QLabel *name = new QLabel(username, this);
             name->setObjectName("usernameLabel");
-            
+
             layout->addWidget(avatar);
             layout->addWidget(name, 1);
         }
     };
-    
+
 private slots:
     void handleAddManagedRepo(const QString &preselectedPath = "");
     void handleModifyRepoAccess(const QString &appId);
@@ -72,13 +74,15 @@ private slots:
     void handleCloneRepo(const QString &peerId, const QString &repoName);
     void handleAddCollaboratorFromPanel(const QString &peerId);
     void handleSendBroadcastMessage(const QString &message);
-    void handleProjectWindowGroupMessage(const QString& ownerRepoAppId, const QString& message);
-    void handleAddCollaboratorFromProjectWindow(const QString& localAppId);
+    void handleProjectWindowGroupMessage(const QString &ownerRepoAppId, const QString &message);
+    void handleAddCollaboratorFromProjectWindow(const QString &localAppId);
     void handleRemoveCollaboratorFromProjectWindow(const QString &localAppId, const QString &peerIdToRemove);
     void handleIncomingTcpConnectionRequest(QTcpSocket *socket, const QHostAddress &address, quint16 port, const QString &username);
     void handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
-    void handleIncomingChangeProposal(const QString& fromPeer, const QString& repoName, const QString& forBranch, const QString& bundlePath);
+    void handleRepoBundleSent(const QString &repoName, const QString &recipientUsername);
+    void handleRepoBundleProgress(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
+    void handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg);
     void handleGroupMessage(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message);
@@ -90,7 +94,7 @@ private slots:
 private:
     void setupUi();
     void connectSignals();
-    void addCollaboratorToRepo(const QString& localAppId, const QString& peerIdToAdd);
+    void addCollaboratorToRepo(const QString &localAppId, const QString &peerIdToAdd);
 
     // This struct definition is now correct and complete
     struct PendingCloneRequest
@@ -119,6 +123,9 @@ private:
     QWidget *m_sidebarPanel;
     QToolButton *m_dashboardButton;
     QToolButton *m_networkButton;
+
+    // Track last reported progress percentage per repo to avoid spammy logs
+    QHash<QString, int> m_cloneProgressPct;
 };
 
 #endif // MAINWINDOW_H
