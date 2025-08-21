@@ -17,6 +17,8 @@
 
 // --- CommitWidget Implementation ---
 
+// This is a test comment
+
 CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(parent)
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
