@@ -17,6 +17,7 @@
 #include <QTextEdit>
 #include <QTabWidget>
 #include <QLineEdit>
+#include <QTextEdit>
 
 class MainWindow;
 
@@ -76,11 +77,21 @@ private slots:
     void onFileContextMenuRequested(const QPoint &pos);
     void onCommitClicked();
 
+    // Diffs tab
+    void onComputeDiffClicked();
+    void onSwapCommitsClicked();
+    void onDiffFileSelected(QListWidgetItem *item);
+
 private:
     void setupUi();
     void loadCommitLog(const std::string &ref = "");
     void loadBranchList();
     QWidget *createChangesTab();
+    QWidget *createDiffsTab();
+    void setDiffStatus(const QString &text, const QColor &color = QColor("#444"));
+    bool verifyCommit(const QString &sha, QString &normalizedSha, QString &errorOut);
+    bool checkRelatedHistories(const QString &a, const QString &b);
+    QString runGit(const QStringList &args, int timeoutMs = 30000, int *exitCodeOut = nullptr);
 
     GitBackend m_gitBackend;
     QString m_appId;
@@ -92,6 +103,7 @@ private:
     QWidget *m_historyTab;
     QWidget *m_changesTab;
     QWidget *m_collabTab;
+    QWidget *m_diffsTab;
 
     // History Tab widgets
     QListWidget *m_commitLogDisplay;
@@ -118,6 +130,19 @@ private:
     QTextEdit *m_groupChatDisplay;
     QLineEdit *m_groupChatInput;
     QPushButton *m_groupChatSendButton;
+
+    // Diffs Tab widgets
+    QLineEdit *m_commitAInput;
+    QLineEdit *m_commitBInput;
+    QPushButton *m_computeDiffButton;
+    QPushButton *m_swapCommitsButton;
+    QLabel *m_diffStatusLabel;
+    QListWidget *m_diffFilesList;
+    QTextEdit *m_diffViewer;
+
+    // Diffs state
+    QString m_diffCommitA;
+    QString m_diffCommitB;
 };
 
 #endif // PROJECT_WINDOW_H

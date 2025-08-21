@@ -14,6 +14,8 @@
 #include <QUrl>
 #include <QSplitter>
 #include <QMenu>
+#include <QClipboard>
+#include <QApplication>
 
 // --- CommitWidget Implementation ---
 
@@ -28,6 +30,11 @@ CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(pa
     QHBoxLayout *headerLayout = new QHBoxLayout();
     QLabel *shaLabel = new QLabel(QString("<b>commit</b> <font color='#64748B'>%1</font>").arg(QString::fromStdString(info.sha)), this);
     shaLabel->setFont(QFont("monospace"));
+    shaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+
+    QPushButton *copyShaButton = new QPushButton("Copy SHA", this);
+    copyShaButton->setFixedSize(90, 28);
+    copyShaButton->setProperty("commitSha", QString::fromStdString(info.sha));
 
     QPushButton *viewFilesButton = new QPushButton("View Files", this);
     viewFilesButton->setFixedSize(100, 28);
@@ -35,15 +42,19 @@ CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(pa
 
     headerLayout->addWidget(shaLabel);
     headerLayout->addStretch();
+    headerLayout->addWidget(copyShaButton);
     headerLayout->addWidget(viewFilesButton);
 
     QLabel *authorLabel = new QLabel(QString("<b>Author:</b> %1 <%2>").arg(QString::fromStdString(info.author_name).toHtmlEscaped(), QString::fromStdString(info.author_email).toHtmlEscaped()), this);
+    authorLabel->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
 
     QLabel *dateLabel = new QLabel(QString("<b>Date:</b>   %1").arg(QString::fromStdString(info.date)), this);
+    dateLabel->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
 
     QLabel *summaryLabel = new QLabel(QString::fromStdString(info.summary), this);
     summaryLabel->setWordWrap(true);
     summaryLabel->setStyleSheet("margin-left: 15px;");
+    summaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
 
     mainLayout->addLayout(headerLayout);
     mainLayout->addWidget(authorLabel);
@@ -51,6 +62,15 @@ CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(pa
     mainLayout->addWidget(summaryLabel);
 
     connect(viewFilesButton, &QPushButton::clicked, this, &CommitWidget::onButtonClicked);
+    connect(copyShaButton, &QPushButton::clicked, this, [this, copyShaButton]()
+            {
+        const QString sha = copyShaButton->property("commitSha").toString();
+        if (!sha.isEmpty())
+        {
+            QClipboard *cb = QApplication::clipboard();
+            cb->setText(sha);
+            CustomMessageBox::information(this, "Copied", QString("Commit ID copied:\n%1").arg(sha));
+        } });
 }
 
 void CommitWidget::onButtonClicked()
@@ -186,6 +206,7 @@ void ProjectWindow::setupUi()
     m_changesTab = createChangesTab();
     m_historyTab = new QWidget();
     m_collabTab = new QWidget();
+    m_diffsTab = createDiffsTab();
 
     // Setup History Tab
     QVBoxLayout *historyLayout = new QVBoxLayout(m_historyTab);
@@ -217,6 +238,12 @@ void ProjectWindow::setupUi()
     connect(m_checkoutButton, &QPushButton::clicked, this, &ProjectWindow::checkoutBranch);
     connect(m_branchComboBox, &QComboBox::currentTextChanged, this, &ProjectWindow::viewRemoteBranchHistory);
 
+    // Add tabs to tab widget
+    m_tabWidget->addTab(m_changesTab, "Changes");
+    m_tabWidget->addTab(m_historyTab, "History");
+    m_tabWidget->addTab(m_collabTab, "Collaboration");
+    m_tabWidget->addTab(m_diffsTab, "Diffs");
+
     // Setup Collaboration Tab
     QVBoxLayout *collabLayout = new QVBoxLayout(m_collabTab);
     collabLayout->addWidget(new QLabel("<b>Group Members:</b>"));
@@ -241,12 +268,227 @@ void ProjectWindow::setupUi()
     chatInputLayout->addWidget(m_groupChatSendButton);
     collabLayout->addLayout(chatInputLayout);
 
-    // Add all tabs
-    m_tabWidget->addTab(m_changesTab, "Changes");
-    m_tabWidget->addTab(m_historyTab, "History");
-    m_tabWidget->addTab(m_collabTab, "Collaboration");
-
     resize(800, 600);
+}
+
+QWidget *ProjectWindow::createDiffsTab()
+{
+    QWidget *tab = new QWidget(this);
+    QVBoxLayout *layout = new QVBoxLayout(tab);
+
+    // Header inputs
+    QHBoxLayout *header = new QHBoxLayout();
+    QLabel *labelA = new QLabel("Commit A:", tab);
+    m_commitAInput = new QLineEdit(tab);
+    m_commitAInput->setPlaceholderText("e.g., abc123 or branch/tag");
+    QLabel *labelB = new QLabel("Commit B:", tab);
+    m_commitBInput = new QLineEdit(tab);
+    m_commitBInput->setPlaceholderText("e.g., def456 or HEAD");
+    m_swapCommitsButton = new QPushButton("Swap", tab);
+    m_computeDiffButton = new QPushButton("Compute Diff", tab);
+    header->addWidget(labelA);
+    header->addWidget(m_commitAInput, 1);
+    header->addSpacing(8);
+    header->addWidget(labelB);
+    header->addWidget(m_commitBInput, 1);
+    header->addSpacing(8);
+    header->addWidget(m_swapCommitsButton);
+    header->addWidget(m_computeDiffButton);
+    layout->addLayout(header);
+
+    // Status label
+    m_diffStatusLabel = new QLabel(tab);
+    m_diffStatusLabel->setWordWrap(true);
+    setDiffStatus("Enter two commit IDs or refs to compare. Shows changes from A..B (A exclusive, B inclusive).", QColor("#666"));
+    layout->addWidget(m_diffStatusLabel);
+
+    // Split: left file list, right diff viewer
+    QSplitter *split = new QSplitter(Qt::Horizontal, tab);
+    m_diffFilesList = new QListWidget(split);
+    m_diffFilesList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_diffViewer = new QTextEdit(split);
+    m_diffViewer->setReadOnly(true);
+    split->addWidget(m_diffFilesList);
+    split->addWidget(m_diffViewer);
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 3);
+    layout->addWidget(split, 1);
+
+    // Wire signals
+    connect(m_swapCommitsButton, &QPushButton::clicked, this, &ProjectWindow::onSwapCommitsClicked);
+    connect(m_computeDiffButton, &QPushButton::clicked, this, &ProjectWindow::onComputeDiffClicked);
+    connect(m_diffFilesList, &QListWidget::itemClicked, this, &ProjectWindow::onDiffFileSelected);
+
+    return tab;
+}
+
+void ProjectWindow::setDiffStatus(const QString &text, const QColor &color)
+{
+    m_diffStatusLabel->setText(text);
+    QPalette pal = m_diffStatusLabel->palette();
+    pal.setColor(QPalette::WindowText, color);
+    m_diffStatusLabel->setPalette(pal);
+}
+
+QString ProjectWindow::runGit(const QStringList &args, int timeoutMs, int *exitCodeOut)
+{
+    QProcess p;
+    p.setWorkingDirectory(m_repoInfo.localPath);
+    p.start("git", args);
+    if (!p.waitForFinished(timeoutMs))
+        return QString();
+    if (exitCodeOut)
+        *exitCodeOut = p.exitCode();
+    return QString::fromUtf8(p.readAllStandardOutput());
+}
+
+bool ProjectWindow::verifyCommit(const QString &shaOrRef, QString &normalizedSha, QString &errorOut)
+{
+    if (shaOrRef.trimmed().isEmpty())
+    {
+        errorOut = "Commit/Ref is empty";
+        return false;
+    }
+    // Resolve to full SHA
+    int ec = 0;
+    QString out = runGit({"rev-parse", shaOrRef}, 10000, &ec).trimmed();
+    if (ec != 0 || out.isEmpty())
+    {
+        errorOut = QString("Could not resolve '%1' to a commit").arg(shaOrRef);
+        return false;
+    }
+    normalizedSha = out;
+    return true;
+}
+
+bool ProjectWindow::checkRelatedHistories(const QString &a, const QString &b)
+{
+    // Check if there is any merge-base between the two commits.
+    int ec = 0;
+    QString base = runGit({"merge-base", a, b}, 10000, &ec).trimmed();
+    return (ec == 0 && !base.isEmpty());
+}
+
+void ProjectWindow::onSwapCommitsClicked()
+{
+    QString a = m_commitAInput->text();
+    QString b = m_commitBInput->text();
+    m_commitAInput->setText(b);
+    m_commitBInput->setText(a);
+}
+
+void ProjectWindow::onComputeDiffClicked()
+{
+    m_diffFilesList->clear();
+    m_diffViewer->clear();
+
+    QString aIn = m_commitAInput->text().trimmed();
+    QString bIn = m_commitBInput->text().trimmed();
+    QString a, b, err;
+
+    if (!verifyCommit(aIn, a, err))
+    {
+        setDiffStatus(QString("A: %1").arg(err), Qt::red);
+        return;
+    }
+    if (!verifyCommit(bIn, b, err))
+    {
+        setDiffStatus(QString("B: %1").arg(err), Qt::red);
+        return;
+    }
+
+    m_diffCommitA = a;
+    m_diffCommitB = b;
+
+    // Check if histories are related
+    if (!checkRelatedHistories(a, b))
+    {
+        setDiffStatus("These commits do not share history. Showing diff is not meaningful.", QColor("#B58900"));
+        return;
+    }
+
+    // List changed files between a..b
+    int ec = 0;
+    QString nameStatus = runGit({"diff", "--name-status", a + ".." + b}, 60000, &ec);
+    if (ec != 0)
+    {
+        setDiffStatus("Failed to compute diff (name-status).", Qt::red);
+        return;
+    }
+
+    QStringList lines = nameStatus.split('\n', Qt::SkipEmptyParts);
+    if (lines.isEmpty())
+    {
+        setDiffStatus("No changes between the selected commits.", QColor("#2AA198"));
+        return;
+    }
+
+    setDiffStatus(QString("%1 files changed between %2..%3").arg(lines.size()).arg(a.left(7)).arg(b.left(7)), QColor("#444"));
+
+    for (const QString &line : lines)
+    {
+        // Format: "M\tpath" or "R100\told\tnew" etc.
+        QStringList parts = line.split('\t');
+        if (parts.isEmpty())
+            continue;
+        QString status = parts[0];
+        QString display;
+        QString filePath;
+        if (status.startsWith('R'))
+        {
+            // rename: Rxxx\told\tnew
+            if (parts.size() >= 3)
+            {
+                display = QString("Renamed: %1 → %2").arg(parts[1], parts[2]);
+                filePath = parts[2];
+            }
+        }
+        else if (status == "A" && parts.size() >= 2)
+        {
+            display = QString("Added: %1").arg(parts[1]);
+            filePath = parts[1];
+        }
+        else if (status == "D" && parts.size() >= 2)
+        {
+            display = QString("Deleted: %1").arg(parts[1]);
+            filePath = parts[1];
+        }
+        else if (parts.size() >= 2)
+        {
+            display = QString("Modified: %1").arg(parts[1]);
+            filePath = parts[1];
+        }
+
+        if (!filePath.isEmpty())
+        {
+            QListWidgetItem *item = new QListWidgetItem(display, m_diffFilesList);
+            item->setData(Qt::UserRole, filePath);
+        }
+    }
+}
+
+void ProjectWindow::onDiffFileSelected(QListWidgetItem *item)
+{
+    if (!item)
+        return;
+    QString path = item->data(Qt::UserRole).toString();
+    if (path.isEmpty() || m_diffCommitA.isEmpty() || m_diffCommitB.isEmpty())
+        return;
+
+    // Show unified diff for a single file
+    int ec = 0;
+    QString diff = runGit({"diff", m_diffCommitA + ".." + m_diffCommitB, "--", path}, 60000, &ec);
+    if (ec != 0)
+    {
+        m_diffViewer->setPlainText("Failed to load diff for this file.");
+        return;
+    }
+    if (diff.trimmed().isEmpty())
+    {
+        m_diffViewer->setPlainText("No textual changes (binary or metadata-only change).");
+        return;
+    }
+    m_diffViewer->setPlainText(diff);
 }
 
 void ProjectWindow::updateStatus()
