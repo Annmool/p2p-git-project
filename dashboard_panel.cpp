@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QStackedWidget>
 #include <algorithm>
+#include "info_dot.h"
 
 // A custom widget for each repository item to achieve the card layout
 class RepoCardWidget : public QWidget {
@@ -69,6 +70,7 @@ void DashboardPanel::setupUi()
     m_addRepoButton = new QPushButton("Upload", this);
     m_addRepoButton->setObjectName("primaryButton");
     projectsHeaderLayout->addWidget(m_addRepoButton);
+    projectsHeaderLayout->addWidget(makeInfoDot("Upload a new repository to start managing it in SyncIt.", this));
     mainLayout->addLayout(projectsHeaderLayout);
     
     m_projectsContentStack = new QStackedWidget(this);
@@ -106,7 +108,9 @@ void DashboardPanel::setupUi()
     m_modifyAccessButton = new QPushButton("Modify Access...", this);
     m_deleteRepoButton = new QPushButton("Remove from List", this);
     buttonLayout->addWidget(m_modifyAccessButton);
+    buttonLayout->addWidget(makeInfoDot("Change who can see or edit this project.", this));
     buttonLayout->addWidget(m_deleteRepoButton);
+    buttonLayout->addWidget(makeInfoDot("Remove the selected project from your list (does not delete files).", this));
     mainLayout->addLayout(buttonLayout);
 
     mainLayout->addWidget(new QLabel("<b>Operation Status:</b>", this));
@@ -200,3 +204,4 @@ void DashboardPanel::onDeleteClicked()
         emit deleteRepoClicked(selectedId);
     }
 }
+

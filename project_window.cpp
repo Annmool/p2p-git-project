@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QClipboard>
 #include <QApplication>
+#include "info_dot.h"
 
 // --- CommitWidget Implementation ---
 
@@ -43,6 +44,7 @@ CommitWidget::CommitWidget(const CommitInfo &info, QWidget *parent) : QWidget(pa
     headerLayout->addWidget(shaLabel);
     headerLayout->addStretch();
     headerLayout->addWidget(copyShaButton);
+    headerLayout->addWidget(makeInfoDot("Copy the full commit ID (SHA-1) to your clipboard.", this));
     headerLayout->addWidget(viewFilesButton);
 
     QLabel *authorLabel = new QLabel(QString("<b>Author:</b> %1 <%2>").arg(QString::fromStdString(info.author_name).toHtmlEscaped(), QString::fromStdString(info.author_email).toHtmlEscaped()), this);
@@ -148,9 +150,11 @@ QWidget *ProjectWindow::createChangesTab()
     m_refreshStatusButton = new QPushButton("Refresh", stagingArea);
     m_refreshStatusButton->setObjectName("refreshStatusButton");
     unstagedHeaderLayout->addWidget(m_refreshStatusButton);
+    unstagedHeaderLayout->addWidget(makeInfoDot("Update the change lists to reflect the current working directory.", stagingArea));
     m_stageAllButton = new QPushButton("Stage All", stagingArea);
     m_stageAllButton->setObjectName("stageAllButton");
     unstagedHeaderLayout->addWidget(m_stageAllButton);
+    unstagedHeaderLayout->addWidget(makeInfoDot("Stage all changed files to include them in the next commit.", stagingArea));
     stagingLayout->addLayout(unstagedHeaderLayout);
 
     m_unstagedFilesList = new QListWidget(stagingArea);
@@ -163,6 +167,7 @@ QWidget *ProjectWindow::createChangesTab()
     m_unstageAllButton = new QPushButton("Unstage All", stagingArea);
     m_unstageAllButton->setObjectName("unstageAllButton");
     stagedHeaderLayout->addWidget(m_unstageAllButton);
+    stagedHeaderLayout->addWidget(makeInfoDot("Remove all files from the staging area; changes stay in your working tree.", stagingArea));
     stagingLayout->addLayout(stagedHeaderLayout);
 
     m_stagedFilesList = new QListWidget(stagingArea);
@@ -885,3 +890,4 @@ void ProjectWindow::onCommitClicked()
         CustomMessageBox::critical(this, "Commit Failed", QString::fromStdString(error));
     }
 }
+

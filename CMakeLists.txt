@@ -27,6 +27,7 @@ add_executable(${PROJECT_NAME}
     project_window.cpp
     custom_dialogs.cpp
     welcome_window.cpp
+    info_dot.cpp
     res/res.qrc
 )
 

@@ -15,6 +15,7 @@
 #include <QCryptographicHash>
 #include <QComboBox>
 #include <QSplitter>
+#include "info_dot.h"
 
 NetworkPanel::NetworkPanel(QWidget *parent) : QWidget(parent)
 {
@@ -319,3 +320,4 @@ void NetworkPanel::showContextMenu(const QPoint &pos)
         emit addCollaboratorRequested(peerId);
     }
 }
+
