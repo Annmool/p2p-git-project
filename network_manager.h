@@ -80,6 +80,7 @@ signals:
     void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void collaboratorRemovedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
     void changeProposalReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
+    void repoBundleTransferStarted(const QString &repoName, qint64 totalBytes);                     // <<< ADDED THIS LINE
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes); // <<< ADDED THIS LINE
 
 private slots:

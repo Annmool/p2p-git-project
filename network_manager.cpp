@@ -252,6 +252,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             if (transfer->file.open(QIODevice::WriteOnly))
             {
                 m_incomingTransfers.insert(socket, transfer);
+                emit repoBundleTransferStarted(repoName, totalSize);
             }
             else
             {

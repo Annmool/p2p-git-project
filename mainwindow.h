@@ -7,6 +7,7 @@
 #include <QMap>
 #include <QTcpSocket>
 #include <QHostAddress>
+#include <QDateTime>
 #include "network_manager.h"
 #include "dashboard_panel.h"
 
@@ -81,6 +82,7 @@ private slots:
     void handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload);
     void handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const QString &sourcePeerUsername, const QString &repoDisplayName, const QString &clientWantsToSaveAt);
     void handleRepoBundleSent(const QString &repoName, const QString &recipientUsername);
+    void handleRepoBundleTransferStarted(const QString &repoName, qint64 totalBytes);
     void handleRepoBundleProgress(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
     void handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
@@ -126,6 +128,10 @@ private:
 
     // Track last reported progress percentage per repo to avoid spammy logs
     QHash<QString, int> m_cloneProgressPct;
+
+    // Progress dialog for repository transfers
+    class CustomProgressDialog *m_transferProgressDialog;
+    QDateTime m_transferStartTime;
 };
 
 #endif // MAINWINDOW_H

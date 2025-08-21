@@ -7,6 +7,7 @@
 #include "network_manager.h"
 #include "git_backend.h"
 #include "custom_dialogs.h"
+#include "welcome_window.h"
 
 #include <QVBoxLayout>
 #include <QStackedWidget>
@@ -59,14 +60,27 @@ MainWindow::MainWindow(QWidget *parent)
       m_repoManager(nullptr),
       m_networkManager(nullptr)
 {
-    bool ok_name;
+    // Generate default name
     QString name_prompt_default = QHostInfo::localHostName();
     if (name_prompt_default.isEmpty())
     {
         name_prompt_default = "Peer" + QString::number(QRandomGenerator::global()->bounded(10000));
     }
-    m_myUsername = CustomInputDialog::getText(this, "Enter Peer Name", "Peer Name:", name_prompt_default, &ok_name);
-    if (!ok_name || m_myUsername.isEmpty())
+
+    // Show welcome window
+    WelcomeWindow welcomeWindow(name_prompt_default);
+    if (welcomeWindow.exec() == QDialog::Accepted)
+    {
+        m_myUsername = welcomeWindow.getPeerName();
+    }
+    else
+    {
+        // User cancelled - exit application
+        QTimer::singleShot(0, this, &QWidget::close);
+        return;
+    }
+
+    if (m_myUsername.isEmpty())
     {
         m_myUsername = name_prompt_default;
     }
@@ -152,6 +166,9 @@ void MainWindow::setupUi()
     mainLayout->addWidget(m_sidebarPanel);
     mainLayout->addWidget(m_mainContentWidget, 1);
 
+    // Initialize transfer progress dialog
+    m_transferProgressDialog = nullptr;
+
     onNavigationClicked(true);
 }
 
@@ -174,6 +191,7 @@ void MainWindow::connectSignals()
         connect(m_networkManager, &NetworkManager::repoBundleRequestedByPeer, this, &MainWindow::handleRepoBundleRequest);
         connect(m_networkManager, &NetworkManager::repoBundleCompleted, this, &MainWindow::handleRepoBundleCompleted);
         connect(m_networkManager, &NetworkManager::repoBundleSent, this, &MainWindow::handleRepoBundleSent);
+        connect(m_networkManager, &NetworkManager::repoBundleTransferStarted, this, &MainWindow::handleRepoBundleTransferStarted);
         connect(m_networkManager, &NetworkManager::repoBundleChunkReceived, this, &MainWindow::handleRepoBundleProgress);
         connect(m_networkManager, &NetworkManager::tcpServerStatusChanged, m_networkPanel, &NetworkPanel::updateServerStatus);
         connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
@@ -873,11 +891,110 @@ void MainWindow::handleRepoBundleSent(const QString &repoName, const QString &re
     QMessageBox::information(this, "Bundle Sent", QString("Repository '%1' has been sent to %2.").arg(repoName, recipientUsername));
 }
 
+void MainWindow::handleRepoBundleTransferStarted(const QString &repoName, qint64 totalBytes)
+{
+    // Record transfer start time for speed calculation
+    m_transferStartTime = QDateTime::currentDateTime();
+
+    // Create and show progress dialog if not already shown
+    if (!m_transferProgressDialog)
+    {
+        m_transferProgressDialog = new CustomProgressDialog(this);
+        m_transferProgressDialog->setAutoClose(false);
+        m_transferProgressDialog->setAutoReset(false);
+
+        // Connect cancel signal to handle transfer cancellation
+        connect(m_transferProgressDialog, &CustomProgressDialog::canceled, this, [this, repoName]()
+                {
+            // Log the cancellation
+            m_networkPanel->logMessage(QString("Transfer of '%1' was cancelled by user").arg(repoName), Qt::red);
+            
+            // Hide and cleanup dialog
+            if (m_transferProgressDialog) {
+                m_transferProgressDialog->hide();
+                m_transferProgressDialog->deleteLater();
+                m_transferProgressDialog = nullptr;
+            }
+            
+            // Reset progress tracking
+            m_cloneProgressPct.remove(repoName); });
+    }
+
+    // Configure the dialog for this transfer
+    m_transferProgressDialog->setLabelText(QString("Downloading repository: %1\nSize: %2 KB\nStarting transfer...").arg(repoName).arg(totalBytes / 1024));
+    m_transferProgressDialog->setCancelButtonText("Cancel Transfer");
+    m_transferProgressDialog->setRange(0, 100);
+    m_transferProgressDialog->setValue(0);
+    m_transferProgressDialog->reset();
+
+    // Show the dialog
+    m_transferProgressDialog->show();
+    m_transferProgressDialog->raise();
+    m_transferProgressDialog->activateWindow();
+
+    // Log transfer start
+    m_networkPanel->logMessage(QString("Starting download of '%1' (%2 KB)").arg(repoName).arg(totalBytes / 1024), QColor("darkBlue"));
+}
+
 void MainWindow::handleRepoBundleProgress(const QString &repoName, qint64 bytesReceived, qint64 totalBytes)
 {
     if (totalBytes <= 0)
         return;
+
     int pct = int((bytesReceived * 100) / totalBytes);
+
+    // Update progress dialog if it exists
+    if (m_transferProgressDialog && !m_transferProgressDialog->wasCanceled())
+    {
+        m_transferProgressDialog->setValue(pct);
+
+        // Calculate transfer speed and ETA
+        qint64 elapsedMs = m_transferStartTime.msecsTo(QDateTime::currentDateTime());
+        QString speedInfo;
+        QString etaInfo;
+
+        if (elapsedMs > 1000 && bytesReceived > 0) // Only calculate after 1 second
+        {
+            double bytesPerSecond = (double)bytesReceived / (elapsedMs / 1000.0);
+            double kbPerSecond = bytesPerSecond / 1024.0;
+
+            // Calculate ETA
+            qint64 remainingBytes = totalBytes - bytesReceived;
+            if (bytesPerSecond > 0)
+            {
+                int etaSeconds = (int)(remainingBytes / bytesPerSecond);
+                int etaMinutes = etaSeconds / 60;
+                etaSeconds %= 60;
+
+                if (etaMinutes > 0)
+                    etaInfo = QString("ETA: %1m %2s").arg(etaMinutes).arg(etaSeconds);
+                else
+                    etaInfo = QString("ETA: %1s").arg(etaSeconds);
+            }
+
+            if (kbPerSecond >= 1024)
+                speedInfo = QString("Speed: %.1f MB/s").arg(kbPerSecond / 1024.0);
+            else
+                speedInfo = QString("Speed: %.1f KB/s").arg(kbPerSecond);
+        }
+        else
+        {
+            speedInfo = "Speed: calculating...";
+            etaInfo = "ETA: calculating...";
+        }
+
+        // Update label with detailed info
+        QString progressText = QString("Downloading repository: %1\nProgress: %2% (%3 KB / %4 KB)\n%5\n%6")
+                                   .arg(repoName)
+                                   .arg(pct)
+                                   .arg(bytesReceived / 1024)
+                                   .arg(totalBytes / 1024)
+                                   .arg(speedInfo)
+                                   .arg(etaInfo);
+        m_transferProgressDialog->setLabelText(progressText);
+    }
+
+    // Log progress periodically
     int last = m_cloneProgressPct.value(repoName, -1);
     if (pct / 10 != last / 10)
     { // log every ~10%
@@ -893,10 +1010,32 @@ void MainWindow::handleRepoBundleProgress(const QString &repoName, qint64 bytesR
 
 void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message)
 {
+    // Close progress dialog regardless of success/failure
+    if (m_transferProgressDialog)
+    {
+        if (success)
+        {
+            m_transferProgressDialog->setValue(100);
+            m_transferProgressDialog->setLabelText(QString("Download completed: %1\nProcessing repository...").arg(repoName));
+        }
+
+        // Clean up after a short delay to let user see completion
+        QTimer::singleShot(1000, this, [this]()
+                           {
+            if (m_transferProgressDialog) {
+                m_transferProgressDialog->hide();
+                m_transferProgressDialog->deleteLater();
+                m_transferProgressDialog = nullptr;
+            } });
+    }
+
+    // Clean up progress tracking
+    m_cloneProgressPct.remove(repoName);
+
     if (!success)
     {
         m_networkPanel->logMessage(QString("Failed to receive repo '%1': %2").arg(repoName, message), Qt::red);
-        QMessageBox::critical(this, "Clone Failed", QString("Failed to receive '%1':\n%2").arg(repoName, message));
+        CustomMessageBox::critical(this, "Clone Failed", QString("Failed to receive '%1':\n%2").arg(repoName, message));
         QFile::remove(localBundlePath);
         m_pendingCloneRequest.clear();
         return;
