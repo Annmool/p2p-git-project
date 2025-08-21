@@ -372,7 +372,8 @@ ProjectWindow QPushButton:pressed {
 /* Primary action buttons */
 ProjectWindow QPushButton[objectName="commitButton"],
 ProjectWindow QPushButton[objectName="fetchButton"],
-ProjectWindow QPushButton[objectName="proposeChangesButton"] {
+ProjectWindow QPushButton[objectName="proposeChangesButton"],
+ProjectWindow QPushButton[objectName="refreshButton"] {
     background-color: #0F4C4A;
     color: #FFFFFF;
     border: none;
@@ -381,7 +382,8 @@ ProjectWindow QPushButton[objectName="proposeChangesButton"] {
 
 ProjectWindow QPushButton[objectName="commitButton"]:hover,
 ProjectWindow QPushButton[objectName="fetchButton"]:hover,
-ProjectWindow QPushButton[objectName="proposeChangesButton"]:hover {
+ProjectWindow QPushButton[objectName="proposeChangesButton"]:hover,
+ProjectWindow QPushButton[objectName="refreshButton"]:hover {
     background-color: #14625F;
 }
 
@@ -412,6 +414,79 @@ ProjectWindow QListWidget::item:selected {
 
 ProjectWindow QListWidget::item:hover {
     background-color: #F0F9FF;
+}
+
+/* Scroll areas and scroll bars in project window */
+ProjectWindow QScrollArea {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+
+ProjectWindow QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+ProjectWindow QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+ProjectWindow QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+ProjectWindow QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+ProjectWindow QScrollBar::add-line:vertical,
+ProjectWindow QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+ProjectWindow QScrollBar::add-page:vertical,
+ProjectWindow QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+ProjectWindow QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+ProjectWindow QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+ProjectWindow QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+ProjectWindow QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+ProjectWindow QScrollBar::add-line:horizontal,
+ProjectWindow QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+ProjectWindow QScrollBar::add-page:horizontal,
+ProjectWindow QScrollBar::sub-page:horizontal {
+    background: transparent;
 }
 
 /* Text edits in project window */
@@ -507,4 +582,274 @@ CommitWidget QPushButton {
 CommitWidget QPushButton:hover {
     background-color: #E2E8F0;
     color: #334155;
+}
+
+/* === Network Panel Specific Styling === */
+NetworkPanel {
+    background-color: #F8FAFC;
+}
+
+/* Ensure all labels in network panel have proper styling */
+NetworkPanel QLabel {
+    background-color: transparent;
+    color: #334155;
+    font-weight: 500;
+}
+
+/* Network panel header labels */
+NetworkPanel QLabel[objectName="networkHeaderLabel"],
+NetworkPanel QLabel[objectName="peersHeaderLabel"],
+NetworkPanel QLabel[objectName="logHeaderLabel"] {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0F4C4A;
+    padding: 8px 0px;
+    background-color: transparent;
+}
+
+/* Peer info label with better styling */
+NetworkPanel QLabel[objectName="myPeerInfoLabel"] {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+/* TCP server status label */
+NetworkPanel QLabel[objectName="tcpServerStatusLabel"] {
+    background-color: #F1F5F9;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: "monospace";
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+/* Network panel tree widget styling */
+NetworkPanel QTreeWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    gridline-color: #F1F5F9;
+}
+
+NetworkPanel QTreeWidget::item {
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+    background-color: transparent;
+}
+
+NetworkPanel QTreeWidget::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+NetworkPanel QTreeWidget::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Network log display */
+NetworkPanel QTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: "monospace";
+    font-size: 13px;
+    color: #334155;
+    selection-background-color: #E0F2FE;
+}
+
+/* Network panel buttons */
+NetworkPanel QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-height: 32px;
+}
+
+NetworkPanel QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+NetworkPanel QPushButton:pressed {
+    background-color: #CBD5E1;
+}
+
+/* Primary network action buttons */
+NetworkPanel QPushButton[objectName="toggleDiscoveryButton"],
+NetworkPanel QPushButton[objectName="connectToPeerButton"],
+NetworkPanel QPushButton[objectName="sendMessageButton"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 600;
+}
+
+NetworkPanel QPushButton[objectName="toggleDiscoveryButton"]:hover,
+NetworkPanel QPushButton[objectName="connectToPeerButton"]:hover,
+NetworkPanel QPushButton[objectName="sendMessageButton"]:hover {
+    background-color: #14625F;
+}
+
+/* Network panel input field */
+NetworkPanel QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+}
+
+NetworkPanel QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}
+
+/* Network panel scroll bars */
+NetworkPanel QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+NetworkPanel QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+NetworkPanel QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+NetworkPanel QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+NetworkPanel QScrollBar::add-line:vertical,
+NetworkPanel QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+NetworkPanel QScrollBar::add-page:vertical,
+NetworkPanel QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+NetworkPanel QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+NetworkPanel QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+NetworkPanel QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+NetworkPanel QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+NetworkPanel QScrollBar::add-line:horizontal,
+NetworkPanel QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+NetworkPanel QScrollBar::add-page:horizontal,
+NetworkPanel QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+/* === Global scroll bar styling for all widgets === */
+QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
 }

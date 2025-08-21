@@ -192,28 +192,24 @@ void ProjectWindow::setupUi()
     historyLayout->addWidget(m_statusLabel);
     m_commitLogDisplay = new QListWidget(this);
     m_commitLogDisplay->setAlternatingRowColors(true);
-    m_commitLogDisplay->setStyleSheet("QListWidget { border: 1px solid #dee2e6; }");
     historyLayout->addWidget(m_commitLogDisplay, 1);
     QHBoxLayout *controlsLayout = new QHBoxLayout();
-    m_refreshLogButton = new QPushButton("Refresh Log", this);
-    m_refreshLogButton->setObjectName("refreshLogButton");
+    m_refreshButton = new QPushButton("Refresh", this);
+    m_refreshButton->setObjectName("refreshButton");
     m_fetchButton = new QPushButton("Fetch", this);
     m_fetchButton->setObjectName("fetchButton");
     m_proposeChangesButton = new QPushButton("Propose Changes", this);
     m_proposeChangesButton->setObjectName("proposeChangesButton");
     m_branchComboBox = new QComboBox(this);
-    m_refreshBranchesButton = new QPushButton("Refresh Branches", this);
     m_checkoutButton = new QPushButton("Checkout Branch", this);
     controlsLayout->addWidget(m_fetchButton);
     controlsLayout->addWidget(m_proposeChangesButton);
     controlsLayout->addStretch();
-    controlsLayout->addWidget(m_refreshLogButton);
-    controlsLayout->addWidget(m_refreshBranchesButton);
+    controlsLayout->addWidget(m_refreshButton);
     controlsLayout->addWidget(m_branchComboBox, 1);
     controlsLayout->addWidget(m_checkoutButton);
     historyLayout->addLayout(controlsLayout);
-    connect(m_refreshLogButton, &QPushButton::clicked, this, &ProjectWindow::refreshLog);
-    connect(m_refreshBranchesButton, &QPushButton::clicked, this, &ProjectWindow::refreshBranches);
+    connect(m_refreshButton, &QPushButton::clicked, this, &ProjectWindow::refreshAll);
     connect(m_fetchButton, &QPushButton::clicked, this, &ProjectWindow::onFetchClicked);
     connect(m_proposeChangesButton, &QPushButton::clicked, this, &ProjectWindow::onProposeChangesClicked);
     connect(m_checkoutButton, &QPushButton::clicked, this, &ProjectWindow::checkoutBranch);
@@ -339,6 +335,12 @@ void ProjectWindow::onGroupMemberSelectionChanged()
         }
     }
     m_removeCollaboratorButton->setEnabled(canRemove);
+}
+
+void ProjectWindow::refreshAll()
+{
+    loadBranchList();
+    loadCommitLog(m_branchComboBox->currentText().toStdString());
 }
 
 void ProjectWindow::refreshLog()
