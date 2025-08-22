@@ -1,8 +1,8 @@
-#ifndef REPO_MANAGEMENT_PANEL_H
-#define REPO_MANAGEMENT_PANEL_H
+#ifndef DASHBOARD_PANEL_H
+#define DASHBOARD_PANEL_H
 
 #include <QWidget>
-#include "repository_manager.h" // For ManagedRepositoryInfo
+#include "repository_manager.h"
 
 QT_BEGIN_NAMESPACE
 class QListWidget;
@@ -10,40 +10,47 @@ class QPushButton;
 class QTextEdit;
 class QListWidgetItem;
 class QLabel;
+class QStackedWidget;
 QT_END_NAMESPACE
 
-class RepoManagementPanel : public QWidget
+class DashboardPanel : public QWidget
 {
     Q_OBJECT
 public:
-    explicit RepoManagementPanel(QWidget *parent = nullptr);
+    explicit DashboardPanel(QWidget *parent = nullptr);
 
-    QString getSelectedRepoId() const;
     void logStatus(const QString &message, bool isError = false);
+    void setWelcomeMessage(const QString& username);
 
 public slots:
-    void updateRepoList(const QList<ManagedRepositoryInfo> &repos);
+    void updateRepoList(const QList<ManagedRepositoryInfo> &repos, const QString &myPeerId);
 
 signals:
     void addRepoClicked();
     void modifyAccessClicked(const QString &appId);
     void deleteRepoClicked(const QString &appId);
-    void openRepoInGitPanel(const QString &path); // Signal to open repo
+    void openRepoInGitPanel(const QString &appId);
 
 private slots:
     void onRepoSelectionChanged();
     void onRepoDoubleClicked(QListWidgetItem *item);
-    void onModifyAccessClicked(); // Private slots to handle button clicks
+    void onModifyAccessClicked();
     void onDeleteClicked();
 
 private:
     void setupUi();
+    QString getSelectedRepoId() const;
 
+    // Member variable declarations
     QListWidget *m_managedReposListWidget;
     QPushButton *m_addRepoButton;
     QPushButton *m_modifyAccessButton;
     QPushButton *m_deleteRepoButton;
     QTextEdit *m_statusLog;
+    QLabel* m_welcomeHeader;
+    QLabel* m_projectsHeaderLabel;
+    QStackedWidget *m_projectsContentStack;
+    QWidget *m_noProjectsWidget;
 };
 
-#endif // REPO_MANAGEMENT_PANEL_H
+#endif // DASHBOARD_PANEL_H

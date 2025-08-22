@@ -7,7 +7,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QDebug>
-#include <QRegExp>
+#include <QRegularExpression>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/stat.h>
@@ -33,47 +33,34 @@ IdentityManager::IdentityManager(const QString &peerNameForPath, const std::stri
         qWarning() << "IdentityManager: AppLocalDataLocation empty, using fallback:" << appDataBaseLocation;
     }
 
-    QDir baseAppDir(appDataBaseLocation);
-    if (!baseAppDir.exists(appName))
-    {
-        if (!baseAppDir.mkdir(appName))
-        {
-            qWarning() << "IdentityManager: Could not create application base directory:" << baseAppDir.filePath(appName);
-        }
-    }
-    // Try to cd into appName, if it fails, baseAppDir remains the original appDataBaseLocation
-    if (!baseAppDir.cd(appName))
-    {
-        qWarning() << "IdentityManager: Could not cd into app specific dir" << appName << ", using:" << baseAppDir.path();
-    }
-
+    // --- FIX: Correctly create the nested directory path ---
     QString sanitizedPeerName = peerNameForPath;
     if (sanitizedPeerName.isEmpty())
         sanitizedPeerName = "default_identity_keys";
-    sanitizedPeerName.remove(QRegExp(QStringLiteral("[^a-zA-Z0-9_.-]")));
+    
+    sanitizedPeerName.remove(QRegularExpression(QStringLiteral("[^a-zA-Z0-9_.-]")));
     if (sanitizedPeerName.isEmpty())
         sanitizedPeerName = "default_sanitized_identity_keys";
 
-    if (!baseAppDir.exists(sanitizedPeerName))
-    {
-        if (!baseAppDir.mkdir(sanitizedPeerName))
-        {
-            qWarning() << "IdentityManager: Could not create peer-specific key directory:" << baseAppDir.filePath(sanitizedPeerName);
-            m_dataPath = baseAppDir.absolutePath().toStdString();
+    // Construct the full desired path first
+    QString fullPath = QDir(appDataBaseLocation).filePath(appName + "/" + sanitizedPeerName);
+    
+    QDir keyDir(fullPath);
+    if (!keyDir.exists()) {
+        // Use mkpath on the QDir object. It will create all necessary parent directories.
+        if (!keyDir.mkpath(".")) {
+            qWarning() << "IdentityManager: Could not create full key directory path:" << keyDir.absolutePath();
+            // m_dataPath will remain empty, causing initialization to fail safely.
+            return; 
         }
-        else
-        {
-            m_dataPath = baseAppDir.filePath(sanitizedPeerName).toStdString();
-        }
-    }
-    else
-    {
-        m_dataPath = baseAppDir.filePath(sanitizedPeerName).toStdString();
     }
 
+    // Now that the path is guaranteed to exist, set the member variables.
+    m_dataPath = keyDir.absolutePath().toStdString();
     m_publicKeyFilePath = m_dataPath + "/id_ed25519.pub";
     m_privateKeyFilePath = m_dataPath + "/id_ed25519";
     qDebug() << "IdentityManager: Key storage path for peer '" << peerNameForPath << "' set to: " << QString::fromStdString(m_dataPath);
+    // --- END OF FIX ---
 }
 
 IdentityManager::~IdentityManager()
@@ -93,6 +80,14 @@ bool IdentityManager::initializeKeys()
 {
     if (m_keysInitialized)
         return true;
+
+    // Add a check here. If m_dataPath is empty because the directory creation failed,
+    // we cannot proceed.
+    if (m_dataPath.empty()) {
+        qCritical() << "IdentityManager: Key data path is not valid. Cannot initialize keys.";
+        return false;
+    }
+
     if (loadKeyPair())
     {
         m_keysInitialized = true;
@@ -144,7 +139,7 @@ bool IdentityManager::saveKeyPair() const
     std::ofstream pubFile(m_publicKeyFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!pubFile.is_open())
     {
-        qWarning() << "IDM: Cld not open pubkey file:" << QString::fromStdString(m_publicKeyFilePath) << strerror(errno);
+        qWarning() << "IDM: Could not open pubkey file:" << QString::fromStdString(m_publicKeyFilePath) << strerror(errno);
         return false;
     }
     pubFile.write(reinterpret_cast<const char *>(m_publicKey), ID_PUBLIC_KEY_BYTES);
@@ -159,7 +154,7 @@ bool IdentityManager::saveKeyPair() const
     std::ofstream privFile(m_privateKeyFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!privFile.is_open())
     {
-        qWarning() << "IDM: Cld not open privkey file:" << QString::fromStdString(m_privateKeyFilePath) << strerror(errno);
+        qWarning() << "IDM: Could not open privkey file:" << QString::fromStdString(m_privateKeyFilePath) << strerror(errno);
         std::remove(m_publicKeyFilePath.c_str());
         return false;
     }

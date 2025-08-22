@@ -1,0 +1,855 @@
+/* Global Colors & Fonts */
+* {
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    color: #334155; /* slate-700 */
+    font-size: 14px;
+}
+
+QMainWindow, QDialog {
+    background-color: #F8FAFC; /* slate-50 */
+}
+
+/* === Left Sidebar Panel === */
+#sidebarPanel {
+    background-color: #0F4C4A; /* Dark Teal */
+    border-right: none;
+}
+
+#logoLabel {
+    font-size: 18px;
+    font-weight: bold;
+    color: #FFFFFF;
+    padding: 15px 12px;
+}
+
+#sidebarPanel QToolButton {
+    color: #E2E8F0; /* slate-200, for non-selected text */
+    background-color: transparent;
+    border: none;
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    margin: 2px 8px;
+}
+
+#sidebarPanel QToolButton:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #FFFFFF;
+}
+
+#sidebarPanel QToolButton:checked {
+    background-color: #FFFFFF;
+    color: #0F4C4A; /* Dark Teal text on white background */
+    font-weight: 600;
+}
+
+/* === User Profile Section at the bottom of sidebar === */
+#userProfileWidget {
+    border-top: 1px solid #2D5F5D; /* A slightly lighter teal for separator */
+    padding-top: 10px;
+    margin-top: 10px;
+}
+
+QLabel#userAvatarLabel {
+    background-color: #F87171; /* A placeholder color for the avatar, e.g., red-400 */
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    border-radius: 15px; /* Makes it a circle */
+    min-width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    max-height: 30px;
+}
+
+QLabel#usernameLabel {
+    color: #FFFFFF;
+    font-weight: 500;
+}
+
+
+/* === Main Content Area === */
+#mainContentPanel {
+    background-color: #FFFFFF;
+    padding: 24px;
+    border: none;
+}
+
+/* Generic Headers */
+QLabel[heading="1"] {
+    font-size: 24px;
+    font-weight: 600;
+    color: #1E293B; /* slate-800 */
+    padding-bottom: 4px;
+}
+QLabel[heading="2"] {
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 15px;
+    color: #334155; /* slate-700 */
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1; /* slate-300 */
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155; /* slate-700 */
+}
+QPushButton:hover {
+    background-color: #F8FAFC; /* slate-50 */
+    border-color: #94A3B8; /* slate-400 */
+}
+QPushButton:disabled {
+    background-color: #F1F5F9; /* slate-100 */
+    color: #94A3B8; /* slate-400 */
+    border-color: #E2E8F0; /* slate-200 */
+}
+
+/* Primary Action Button Style (e.g., Upload) */
+QPushButton#primaryButton {
+    background-color: #0F4C4A; /* Dark Teal */
+    color: #FFFFFF;
+    border: none;
+    font-weight: bold;
+}
+QPushButton#primaryButton:hover {
+    background-color: #14625F; /* Lighter shade for hover */
+}
+
+/* Text Inputs */
+QLineEdit, QTextEdit, QListView, QTreeView, QTreeWidget, QListWidget {
+    border: 1px solid #CBD5E1; /* slate-300 */
+    border-radius: 6px;
+    padding: 8px;
+    background-color: #FFFFFF;
+}
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid #4A90E2;
+}
+
+/* === Repository Card Styling === */
+QListWidget#repoListWidget {
+    border: none;
+    background-color: transparent;
+}
+QListWidget#repoListWidget::item {
+    border: none; /* The card itself has the border */
+    margin-bottom: 8px;
+}
+QListWidget#repoListWidget::item:selected {
+    background-color: transparent; /* No selection color on the item itself */
+}
+
+#RepoCardWidget {
+    background-color: white;
+    border: 1px solid #E2E8F0; /* slate-200 */
+    border-radius: 8px;
+}
+#RepoCardWidget:hover {
+    border-color: #4A90E2;
+}
+
+QLabel#repoNameLabel {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0F4C4A; /* Dark Teal */
+}
+
+QLabel#repoDetailLabel {
+    color: #64748B; /* slate-500 */
+}
+
+/* === Custom Dialog Styling === */
+CustomMessageBox, CustomFileDialog, CustomInputDialog, CustomProgressDialog {
+    background-color: #FFFFFF;
+    border: 2px solid #CBD5E1;
+    border-radius: 12px;
+}
+
+/* Custom dialog title bar simulation */
+CustomMessageBox QLabel[objectName="titleLabel"], 
+CustomFileDialog QLabel[objectName="titleLabel"],
+CustomInputDialog QLabel[objectName="titleLabel"],
+CustomProgressDialog QLabel[objectName="titleLabel"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    font-weight: bold;
+    padding: 12px 16px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    margin: 0px;
+}
+
+/* Enhanced button styling for dialogs */
+CustomMessageBox QPushButton, 
+CustomFileDialog QPushButton,
+CustomInputDialog QPushButton,
+CustomProgressDialog QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-width: 90px;
+    min-height: 32px;
+}
+
+CustomMessageBox QPushButton:hover, 
+CustomFileDialog QPushButton:hover,
+CustomInputDialog QPushButton:hover,
+CustomProgressDialog QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+CustomMessageBox QPushButton#primaryButton, 
+CustomFileDialog QPushButton#primaryButton,
+CustomInputDialog QPushButton#primaryButton {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: bold;
+}
+
+CustomMessageBox QPushButton#primaryButton:hover, 
+CustomFileDialog QPushButton#primaryButton:hover,
+CustomInputDialog QPushButton#primaryButton:hover {
+    background-color: #14625F;
+}
+
+/* File dialog specific styling */
+CustomFileDialog QTreeView {
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    background-color: #FFFFFF;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    gridline-color: #E2E8F0;
+}
+
+CustomFileDialog QTreeView::item {
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+}
+
+CustomFileDialog QTreeView::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+CustomFileDialog QTreeView::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Progress dialog specific styling */
+CustomProgressDialog QProgressBar {
+    border: 2px solid #CBD5E1;
+    border-radius: 8px;
+    background-color: #F8FAFC;
+    text-align: center;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 12px;
+    color: #334155;
+    font-weight: 500;
+    min-height: 20px;
+}
+
+CustomProgressDialog QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                               stop:0 #0F4C4A, stop:1 #14625F);
+    border-radius: 6px;
+    margin: 2px;
+}
+
+/* Input dialog specific styling */
+CustomInputDialog QLineEdit {
+    border: 2px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 12px;
+    background-color: #FFFFFF;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    font-weight: 500;
+}
+
+CustomInputDialog QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}
+
+/* === Project Window Styling === */
+ProjectWindow {
+    background-color: #F8FAFC;
+}
+
+ProjectWindow QTabWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+
+ProjectWindow QTabWidget::pane {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    top: -1px;
+}
+
+ProjectWindow QTabWidget::tab-bar {
+    left: 10px;
+}
+
+ProjectWindow QTabBar::tab {
+    background-color: #F1F5F9;
+    color: #64748B;
+    padding: 12px 24px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border: 1px solid #E2E8F0;
+    border-bottom: none;
+    margin-right: 2px;
+    font-weight: 500;
+    min-width: 100px;
+}
+
+ProjectWindow QTabBar::tab:selected {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    font-weight: 600;
+    border-color: #0F4C4A;
+}
+
+ProjectWindow QTabBar::tab:hover:!selected {
+    background-color: #E2E8F0;
+    color: #334155;
+}
+
+ProjectWindow QLabel {
+    color: #334155;
+    font-weight: 500;
+}
+
+ProjectWindow QLabel[objectName="statusLabel"] {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+/* Project Window Buttons */
+ProjectWindow QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-height: 32px;
+}
+
+ProjectWindow QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+ProjectWindow QPushButton:pressed {
+    background-color: #CBD5E1;
+}
+
+/* Primary action buttons */
+ProjectWindow QPushButton[objectName="commitButton"],
+ProjectWindow QPushButton[objectName="fetchButton"],
+ProjectWindow QPushButton[objectName="proposeChangesButton"],
+ProjectWindow QPushButton[objectName="refreshButton"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 600;
+}
+
+ProjectWindow QPushButton[objectName="commitButton"]:hover,
+ProjectWindow QPushButton[objectName="fetchButton"]:hover,
+ProjectWindow QPushButton[objectName="proposeChangesButton"]:hover,
+ProjectWindow QPushButton[objectName="refreshButton"]:hover {
+    background-color: #14625F;
+}
+
+/* List widgets in project window */
+ProjectWindow QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    padding: 4px;
+}
+
+ProjectWindow QListWidget::item {
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+    border-radius: 4px;
+    margin: 2px;
+}
+
+ProjectWindow QListWidget::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+ProjectWindow QListWidget::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Scroll areas and scroll bars in project window */
+ProjectWindow QScrollArea {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+
+ProjectWindow QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+ProjectWindow QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+ProjectWindow QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+ProjectWindow QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+ProjectWindow QScrollBar::add-line:vertical,
+ProjectWindow QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+ProjectWindow QScrollBar::add-page:vertical,
+ProjectWindow QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+ProjectWindow QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+ProjectWindow QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+ProjectWindow QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+ProjectWindow QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+ProjectWindow QScrollBar::add-line:horizontal,
+ProjectWindow QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+ProjectWindow QScrollBar::add-page:horizontal,
+ProjectWindow QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+/* Text edits in project window */
+ProjectWindow QTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+    selection-background-color: #E0F2FE;
+}
+
+ProjectWindow QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+}
+
+ProjectWindow QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}
+
+/* Combo boxes in project window */
+ProjectWindow QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+    min-width: 120px;
+}
+
+ProjectWindow QComboBox:hover {
+    border-color: #94A3B8;
+}
+
+ProjectWindow QComboBox:focus {
+    border: 2px solid #0F4C4A;
+}
+
+ProjectWindow QComboBox::drop-down {
+    border: none;
+    width: 30px;
+}
+
+ProjectWindow QComboBox::down-arrow {
+    image: none;
+    border: 4px solid transparent;
+    border-top: 6px solid #64748B;
+    margin-right: 6px;
+}
+
+ProjectWindow QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    padding: 4px;
+}
+
+/* Commit widgets styling */
+CommitWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+CommitWidget:hover {
+    border-color: #CBD5E1;
+    background-color: #F8FAFC;
+}
+
+CommitWidget QPushButton {
+    background-color: #F1F5F9;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #475569;
+}
+
+CommitWidget QPushButton:hover {
+    background-color: #E2E8F0;
+    color: #334155;
+}
+
+/* === Network Panel Specific Styling === */
+NetworkPanel {
+    background-color: #F8FAFC;
+}
+
+/* Ensure all labels in network panel have proper styling */
+NetworkPanel QLabel {
+    background-color: transparent;
+    color: #334155;
+    font-weight: 500;
+}
+
+/* Network panel header labels */
+NetworkPanel QLabel[objectName="networkHeaderLabel"],
+NetworkPanel QLabel[objectName="peersHeaderLabel"],
+NetworkPanel QLabel[objectName="logHeaderLabel"] {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0F4C4A;
+    padding: 8px 0px;
+    background-color: transparent;
+}
+
+/* Peer info label with better styling */
+NetworkPanel QLabel[objectName="myPeerInfoLabel"] {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+/* TCP server status label */
+NetworkPanel QLabel[objectName="tcpServerStatusLabel"] {
+    background-color: #F1F5F9;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: "monospace";
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+/* Network panel tree widget styling */
+NetworkPanel QTreeWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    selection-background-color: #E0F2FE;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    gridline-color: #F1F5F9;
+}
+
+NetworkPanel QTreeWidget::item {
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid #F1F5F9;
+    background-color: transparent;
+}
+
+NetworkPanel QTreeWidget::item:selected {
+    background-color: #E0F2FE;
+    color: #0F4C4A;
+    font-weight: 500;
+}
+
+NetworkPanel QTreeWidget::item:hover {
+    background-color: #F0F9FF;
+}
+
+/* Network log display */
+NetworkPanel QTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: "monospace";
+    font-size: 13px;
+    color: #334155;
+    selection-background-color: #E0F2FE;
+}
+
+/* Network panel buttons */
+NetworkPanel QPushButton {
+    background-color: #F8FAFC;
+    border: 1px solid #CBD5E1;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #334155;
+    min-height: 32px;
+}
+
+NetworkPanel QPushButton:hover {
+    background-color: #E2E8F0;
+    border-color: #94A3B8;
+}
+
+NetworkPanel QPushButton:pressed {
+    background-color: #CBD5E1;
+}
+
+/* Primary network action buttons */
+NetworkPanel QPushButton[objectName="toggleDiscoveryButton"],
+NetworkPanel QPushButton[objectName="connectToPeerButton"],
+NetworkPanel QPushButton[objectName="sendMessageButton"] {
+    background-color: #0F4C4A;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 600;
+}
+
+NetworkPanel QPushButton[objectName="toggleDiscoveryButton"]:hover,
+NetworkPanel QPushButton[objectName="connectToPeerButton"]:hover,
+NetworkPanel QPushButton[objectName="sendMessageButton"]:hover {
+    background-color: #14625F;
+}
+
+/* Network panel input field */
+NetworkPanel QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+    font-size: 14px;
+    color: #334155;
+}
+
+NetworkPanel QLineEdit:focus {
+    border: 2px solid #0F4C4A;
+    background-color: #F8FAFC;
+}
+
+/* Network panel scroll bars */
+NetworkPanel QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+NetworkPanel QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+NetworkPanel QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+NetworkPanel QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+NetworkPanel QScrollBar::add-line:vertical,
+NetworkPanel QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+NetworkPanel QScrollBar::add-page:vertical,
+NetworkPanel QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+NetworkPanel QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+NetworkPanel QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+NetworkPanel QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+NetworkPanel QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+NetworkPanel QScrollBar::add-line:horizontal,
+NetworkPanel QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+NetworkPanel QScrollBar::add-page:horizontal,
+NetworkPanel QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+/* === Global scroll bar styling for all widgets === */
+QScrollBar:vertical {
+    background-color: #F1F5F9;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-height: 20px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+
+QScrollBar::handle:vertical:pressed {
+    background-color: #64748B;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background-color: #F1F5F9;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    border-radius: 6px;
+    min-width: 20px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+
+QScrollBar::handle:horizontal:pressed {
+    background-color: #64748B;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}

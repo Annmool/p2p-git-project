@@ -7,16 +7,18 @@
 #include <QFileInfo>
 #include <QDebug>
 #include <QUuid>
+#include <algorithm>
 
 const QString JSON_KEY_DISPLAY_NAME = "displayName";
 const QString JSON_KEY_LOCAL_PATH = "localPath";
 const QString JSON_KEY_IS_PUBLIC = "isPublic";
-const QString JSON_KEY_ADMIN_PEER_ID = "adminPeerId";
-const QString JSON_KEY_COLLABORATORS = "collaborators";
-const QString JSON_KEY_ORIGIN_PEER_ID = "originPeerId";
+const QString JSON_KEY_OWNER_PEER_ID = "ownerPeerId";
+const QString JSON_KEY_OWNER_REPO_APP_ID = "ownerRepoAppId";
+const QString JSON_KEY_GROUP_MEMBERS = "groupMembers";
+const QString JSON_KEY_IS_OWNER_FLAG = "isOwnerFlag";
 
-RepositoryManager::RepositoryManager(const QString &storageFilePath, QObject *parent)
-    : QObject(parent), m_storageFilePath(storageFilePath)
+RepositoryManager::RepositoryManager(const QString &storageFilePath, const QString &myPeerId, QObject *parent)
+    : QObject(parent), m_storageFilePath(storageFilePath), m_myPeerId(myPeerId)
 {
     loadRepositoriesFromFile();
 }
@@ -26,13 +28,11 @@ RepositoryManager::~RepositoryManager()
     saveRepositoriesToFile();
 }
 
-bool RepositoryManager::addManagedRepository(const QString &localPath, const QString &displayName, bool isPublic, const QString &adminPeerId, const QString &originPeerId)
+bool RepositoryManager::addManagedRepository(const QString &displayName, const QString &localPath, bool isPublic, const QString &ownerPeerId, const QString &ownerRepoAppId, const QStringList &initialGroupMembers, bool isOwner)
 {
     QString canonicalPath = QDir(localPath).canonicalPath();
-    for (const auto &repo : qAsConst(m_managedRepositories))
-    {
-        if (QDir(repo.localPath).canonicalPath() == canonicalPath)
-        {
+    for (const auto &repo : qAsConst(m_managedRepositories)) {
+        if (QDir(repo.localPath).canonicalPath() == canonicalPath) {
             qWarning() << "Repository at path" << localPath << "is already managed.";
             return false;
         }
@@ -42,9 +42,23 @@ bool RepositoryManager::addManagedRepository(const QString &localPath, const QSt
     newRepo.appId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     newRepo.localPath = canonicalPath;
     newRepo.displayName = displayName;
-    newRepo.isPublic = isPublic;
-    newRepo.adminPeerId = adminPeerId;
-    newRepo.originPeerId = originPeerId;
+    newRepo.ownerPeerId = ownerPeerId;
+    newRepo.groupMembers = initialGroupMembers;
+    newRepo.isOwner = isOwner;
+
+    if (newRepo.isOwner) {
+        newRepo.ownerRepoAppId = newRepo.appId;
+        newRepo.isPublic = isPublic;
+        if (!newRepo.groupMembers.contains(m_myPeerId)) {
+            newRepo.groupMembers.append(m_myPeerId);
+        }
+    } else {
+        newRepo.ownerRepoAppId = ownerRepoAppId;
+        newRepo.isPublic = false;
+        if (!newRepo.groupMembers.contains(m_myPeerId)) {
+            newRepo.groupMembers.append(m_myPeerId);
+        }
+    }
 
     m_managedRepositories.insert(newRepo.appId, newRepo);
     emit managedRepositoryListChanged();
@@ -53,8 +67,7 @@ bool RepositoryManager::addManagedRepository(const QString &localPath, const QSt
 
 bool RepositoryManager::removeManagedRepository(const QString &appId)
 {
-    if (m_managedRepositories.remove(appId) > 0)
-    {
+    if (m_managedRepositories.remove(appId) > 0) {
         emit managedRepositoryListChanged();
         return saveRepositoriesToFile();
     }
@@ -63,9 +76,10 @@ bool RepositoryManager::removeManagedRepository(const QString &appId)
 
 bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPublic)
 {
-    if (m_managedRepositories.contains(appId))
-    {
-        m_managedRepositories[appId].isPublic = isPublic;
+    if (m_managedRepositories.contains(appId)) {
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId];
+        if (!repo.isOwner) return false;
+        repo.isPublic = isPublic;
         emit managedRepositoryListChanged();
         return saveRepositoriesToFile();
     }
@@ -74,11 +88,51 @@ bool RepositoryManager::setRepositoryVisibility(const QString &appId, bool isPub
 
 bool RepositoryManager::addCollaborator(const QString &appId, const QString &peerId)
 {
-    if (m_managedRepositories.contains(appId) && !m_managedRepositories[appId].collaborators.contains(peerId))
-    {
-        m_managedRepositories[appId].collaborators.append(peerId);
-        emit managedRepositoryListChanged();
-        return saveRepositoriesToFile();
+    if (m_managedRepositories.contains(appId)) {
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId];
+        if (!repo.isOwner) return false;
+        if (!repo.groupMembers.contains(peerId)) {
+            repo.groupMembers.append(peerId);
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
+        }
+    }
+    return false;
+}
+
+bool RepositoryManager::removeCollaborator(const QString &appId, const QString &peerId)
+{
+    if (m_managedRepositories.contains(appId)) {
+        ManagedRepositoryInfo &repo = m_managedRepositories[appId];
+        if (!repo.isOwner || repo.ownerPeerId == peerId) return false;
+        if (repo.groupMembers.removeAll(peerId) > 0) {
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
+        }
+    }
+    return false;
+}
+
+bool RepositoryManager::updateGroupMembersAndOwnerAppId(const QString &localAppId, const QString &ownerRepoAppId, const QStringList &newGroupMembers)
+{
+    if (m_managedRepositories.contains(localAppId)) {
+        ManagedRepositoryInfo &repo = m_managedRepositories[localAppId];
+        if (repo.isOwner) return false;
+
+        bool changed = false;
+        if (repo.groupMembers != newGroupMembers) {
+            repo.groupMembers = newGroupMembers;
+            changed = true;
+        }
+        if (repo.ownerRepoAppId != ownerRepoAppId) {
+            repo.ownerRepoAppId = ownerRepoAppId;
+            changed = true;
+        }
+
+        if (changed) {
+            emit managedRepositoryListChanged();
+            return saveRepositoriesToFile();
+        }
     }
     return false;
 }
@@ -113,92 +167,129 @@ ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByDisplayName(const QS
     return ManagedRepositoryInfo();
 }
 
+ManagedRepositoryInfo RepositoryManager::getCloneInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories)) {
+        if (!repoInfo.isOwner && repoInfo.ownerPeerId == ownerPeerId && repoInfo.displayName == displayName) {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories)) {
+        if (repoInfo.ownerRepoAppId == ownerRepoAppId) {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
 QList<ManagedRepositoryInfo> RepositoryManager::getAllManagedRepositories() const
 {
     return m_managedRepositories.values();
 }
 
-QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclySharedRepositories(const QString &requestingPeer) const
+QList<ManagedRepositoryInfo> RepositoryManager::getMyPubliclyShareableRepos() const
 {
     QList<ManagedRepositoryInfo> repos;
-    for (const auto &repo : qAsConst(m_managedRepositories))
-    {
-        if (repo.isPublic || repo.collaborators.contains(requestingPeer))
-        {
+    for (const auto &repo : qAsConst(m_managedRepositories)) {
+        if (repo.isOwner && repo.isPublic) {
             repos.append(repo);
         }
     }
     return repos;
 }
 
-QList<ManagedRepositoryInfo> RepositoryManager::getMyPrivateRepositories(const QString &myPeerId) const
+QList<ManagedRepositoryInfo> RepositoryManager::getRepositoriesIAmMemberOf() const
 {
-    QList<ManagedRepositoryInfo> privateRepos;
-    for (const auto &repo : qAsConst(m_managedRepositories))
-    {
-        // Only return private repos that this user actually owns
-        if (!repo.isPublic && repo.adminPeerId == myPeerId)
-        {
-            privateRepos.append(repo);
+    QList<ManagedRepositoryInfo> memberRepos;
+    for (const auto &repo : qAsConst(m_managedRepositories)) {
+        if (repo.groupMembers.contains(m_myPeerId)) {
+            memberRepos.append(repo);
         }
     }
-    return privateRepos;
+    std::sort(memberRepos.begin(), memberRepos.end(), [](const ManagedRepositoryInfo &a, const ManagedRepositoryInfo &b)
+              {
+                  if (a.isOwner != b.isOwner) return a.isOwner > b.isOwner;
+                  return a.displayName.compare(b.displayName, Qt::CaseInsensitive) < 0; });
+    return memberRepos;
 }
 
 bool RepositoryManager::loadRepositoriesFromFile()
 {
     QFile loadFile(m_storageFilePath);
-    if (!loadFile.open(QIODevice::ReadOnly | QIODevice::Text))
+    if (!loadFile.exists()) {
+        return true;
+    }
+    if (!loadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "Couldn't open repository storage file for reading:" << m_storageFilePath << loadFile.errorString();
         return false;
+    }
     QJsonDocument loadDoc = QJsonDocument::fromJson(loadFile.readAll());
-    if (!loadDoc.isObject())
+    loadFile.close();
+
+    if (!loadDoc.isObject()) {
+        qWarning() << "Repository storage file is not a valid JSON object:" << m_storageFilePath;
         return false;
+    }
 
     QJsonObject json = loadDoc.object();
     m_managedRepositories.clear();
-    for (const QString &key : json.keys())
-    {
+    for (const QString &key : json.keys()) {
         QJsonObject repoObject = json[key].toObject();
         ManagedRepositoryInfo repo;
         repo.appId = key;
         repo.displayName = repoObject[JSON_KEY_DISPLAY_NAME].toString();
         repo.localPath = repoObject[JSON_KEY_LOCAL_PATH].toString();
         repo.isPublic = repoObject[JSON_KEY_IS_PUBLIC].toBool(false);
-        repo.adminPeerId = repoObject[JSON_KEY_ADMIN_PEER_ID].toString();
-        repo.originPeerId = repoObject[JSON_KEY_ORIGIN_PEER_ID].toString();
-        QJsonArray collaboratorsArray = repoObject[JSON_KEY_COLLABORATORS].toArray();
-        for (const QJsonValue &v : collaboratorsArray)
-        {
-            repo.collaborators.append(v.toString());
+        repo.ownerPeerId = repoObject[JSON_KEY_OWNER_PEER_ID].toString();
+        repo.ownerRepoAppId = repoObject[JSON_KEY_OWNER_REPO_APP_ID].toString();
+        repo.isOwner = (repo.ownerPeerId == m_myPeerId);
+        
+        QJsonArray groupMembersArray = repoObject[JSON_KEY_GROUP_MEMBERS].toArray();
+        for (const QJsonValue &v : groupMembersArray) {
+            repo.groupMembers.append(v.toString());
         }
+
         m_managedRepositories.insert(repo.appId, repo);
     }
-    emit managedRepositoryListChanged();
     return true;
 }
 
 bool RepositoryManager::saveRepositoriesToFile() const
 {
     QDir dir = QFileInfo(m_storageFilePath).dir();
-    if (!dir.exists())
-        dir.mkpath(".");
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            qWarning() << "Could not create directory for repository storage file:" << dir.absolutePath();
+            return false;
+        }
+    }
 
     QFile saveFile(m_storageFilePath);
-    if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+    if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        qWarning() << "Couldn't open repository storage file for writing:" << m_storageFilePath << saveFile.errorString();
         return false;
+    }
 
     QJsonObject json;
-    for (const auto &repo : qAsConst(m_managedRepositories))
-    {
+    for (const auto &repo : qAsConst(m_managedRepositories)) {
         QJsonObject repoObject;
         repoObject[JSON_KEY_DISPLAY_NAME] = repo.displayName;
         repoObject[JSON_KEY_LOCAL_PATH] = repo.localPath;
         repoObject[JSON_KEY_IS_PUBLIC] = repo.isPublic;
-        repoObject[JSON_KEY_ADMIN_PEER_ID] = repo.adminPeerId;
-        repoObject[JSON_KEY_ORIGIN_PEER_ID] = repo.originPeerId;
-        repoObject[JSON_KEY_COLLABORATORS] = QJsonArray::fromStringList(repo.collaborators);
+        repoObject[JSON_KEY_OWNER_PEER_ID] = repo.ownerPeerId;
+        repoObject[JSON_KEY_OWNER_REPO_APP_ID] = repo.ownerRepoAppId;
+        repoObject[JSON_KEY_GROUP_MEMBERS] = QJsonArray::fromStringList(repo.groupMembers);
+        repoObject[JSON_KEY_IS_OWNER_FLAG] = repo.isOwner;
+
         json[repo.appId] = repoObject;
     }
+
     saveFile.write(QJsonDocument(json).toJson(QJsonDocument::Indented));
+    saveFile.close();
     return true;
 }
