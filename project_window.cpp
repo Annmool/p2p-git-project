@@ -559,6 +559,22 @@ void ProjectWindow::onSendGroupMessageClicked()
 
 void ProjectWindow::onAddCollaboratorClicked()
 {
+    // Owner: show multi-select dialog for connected peers not already in group
+    if (!m_repoInfo.isOwner || !m_networkManager)
+        return;
+    QList<QString> connectedPeers = m_networkManager->getConnectedPeerIds();
+    QStringList eligiblePeers;
+    for (const auto &peer : connectedPeers)
+    {
+        if (!m_repoInfo.groupMembers.contains(peer))
+            eligiblePeers.append(peer);
+    }
+    if (eligiblePeers.isEmpty())
+    {
+        CustomMessageBox::information(this, "No Eligible Peers", "No new connected peers are available to add.");
+        return;
+    }
+    // Let MainWindow handle the actual peer selection and processing
     emit addCollaboratorRequested(m_appId);
 }
 
@@ -890,4 +906,3 @@ void ProjectWindow::onCommitClicked()
         CustomMessageBox::critical(this, "Commit Failed", QString::fromStdString(error));
     }
 }
-

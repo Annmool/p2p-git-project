@@ -159,11 +159,14 @@ public:
     void setLabelText(const QString &text);
     void setTextValue(const QString &text);
     QString textValue() const;
+    QStringList selectedItems() const;
 
     static QString getText(QWidget *parent, const QString &title, const QString &label,
                            const QString &text = QString(), bool *ok = nullptr);
     static QString getItem(QWidget *parent, const QString &title, const QString &label,
                            const QStringList &items, int current = 0, bool editable = false, bool *ok = nullptr);
+    static QStringList getMultiItems(QWidget *parent, const QString &title, const QString &label,
+                                     const QStringList &items, bool *ok = nullptr);
 
 public slots:
     void accept() override;
@@ -176,10 +179,12 @@ private:
     QLabel *m_label;
     QLineEdit *m_lineEdit;
     QComboBox *m_comboBox;
+    QListWidget *m_listWidget;
     QHBoxLayout *m_buttonLayout;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;
     bool m_isItemMode;
+    bool m_isMultiSelectMode = false;
 };
 
 class CustomProgressDialog : public QDialog
