@@ -6,5 +6,7 @@
         <file>icons/folder.svg</file>
         <file>icons/git-pull-request.svg</file>
         <file>icons/message-square.svg</file>
+    <file>icons/check-circle-green.svg</file>
+    <file>icons/x-circle-red.svg</file>
     </qresource>
 </RCC>
