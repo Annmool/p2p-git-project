@@ -16,6 +16,9 @@
 #include <QMenu>
 #include <QClipboard>
 #include <QApplication>
+#include <QFileDialog>
+#include <QDragEnterEvent>
+#include <QMimeData>
 #include "info_dot.h"
 
 // --- CommitWidget Implementation ---
@@ -212,8 +215,9 @@ void ProjectWindow::setupUi()
     m_historyTab = new QWidget();
     m_collabTab = new QWidget();
     m_diffsTab = createDiffsTab();
+    m_proposeTab = new QWidget();
 
-    // Setup History Tab
+    // Setup Commits Tab
     QVBoxLayout *historyLayout = new QVBoxLayout(m_historyTab);
     m_statusLabel = new QLabel(this);
     m_statusLabel->setObjectName("statusLabel");
@@ -244,8 +248,39 @@ void ProjectWindow::setupUi()
     connect(m_branchComboBox, &QComboBox::currentTextChanged, this, &ProjectWindow::viewRemoteBranchHistory);
 
     // Add tabs to tab widget
-    m_tabWidget->addTab(m_changesTab, "Changes");
-    m_tabWidget->addTab(m_historyTab, "History");
+    if (m_repoInfo.isOwner)
+        m_tabWidget->addTab(m_changesTab, "Changes");
+    m_tabWidget->addTab(m_historyTab, "Commits");
+    if (!m_repoInfo.isOwner)
+    {
+        // Propose tab for collaborators
+        QVBoxLayout *propLayout = new QVBoxLayout(m_proposeTab);
+        QLabel *hdr = new QLabel("Propose file changes to the owner", m_proposeTab);
+        propLayout->addWidget(hdr);
+        QHBoxLayout *propButtons = new QHBoxLayout();
+        m_addProposeFilesButton = new QPushButton("Add Files…", m_proposeTab);
+        m_removeProposeFilesButton = new QPushButton("Remove Selected", m_proposeTab);
+        propButtons->addWidget(m_addProposeFilesButton);
+        propButtons->addWidget(m_removeProposeFilesButton);
+        propButtons->addStretch();
+        propLayout->addLayout(propButtons);
+        m_proposeFilesList = new QListWidget(m_proposeTab);
+        m_proposeFilesList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        m_proposeFilesList->setAcceptDrops(true);
+        m_proposeFilesList->setDragDropMode(QAbstractItemView::DropOnly);
+        m_proposeFilesList->viewport()->setAcceptDrops(true);
+        propLayout->addWidget(m_proposeFilesList, 1);
+        m_proposeCommitMessage = new QTextEdit(m_proposeTab);
+        m_proposeCommitMessage->setPlaceholderText("Describe your changes (used as commit message if accepted)");
+        m_proposeCommitMessage->setMaximumHeight(100);
+        propLayout->addWidget(m_proposeCommitMessage);
+        m_sendProposedFilesButton = new QPushButton("Send Proposal", m_proposeTab);
+        propLayout->addWidget(m_sendProposedFilesButton);
+        connect(m_addProposeFilesButton, &QPushButton::clicked, this, &ProjectWindow::onProposeFilesAddClicked);
+        connect(m_removeProposeFilesButton, &QPushButton::clicked, this, &ProjectWindow::onProposeFilesRemoveClicked);
+        connect(m_sendProposedFilesButton, &QPushButton::clicked, this, &ProjectWindow::onSendProposedFilesClicked);
+        m_tabWidget->addTab(m_proposeTab, "Propose");
+    }
     m_tabWidget->addTab(m_collabTab, "Collaboration");
     m_tabWidget->addTab(m_diffsTab, "Diffs");
 
@@ -274,6 +309,11 @@ void ProjectWindow::setupUi()
     collabLayout->addLayout(chatInputLayout);
 
     resize(800, 600);
+}
+
+QWidget *ProjectWindow::createProposeTab()
+{
+    return m_proposeTab; // placeholder; UI built inline in setupUi based on role
 }
 
 QWidget *ProjectWindow::createDiffsTab()
@@ -428,7 +468,18 @@ void ProjectWindow::onComputeDiffClicked()
         return;
     }
 
-    setDiffStatus(QString("%1 files changed between %2..%3").arg(lines.size()).arg(a.left(7)).arg(b.left(7)), QColor("#444"));
+    // Fetch commit subjects for A and B
+    QString subjA = runGit({"show", "-s", "--format=%s", a}, 5000).trimmed();
+    QString subjB = runGit({"show", "-s", "--format=%s", b}, 5000).trimmed();
+    QString header = QString("%1 files changed between %2..%3")
+                         .arg(lines.size())
+                         .arg(a.left(7))
+                         .arg(b.left(7));
+    if (!subjA.isEmpty() || !subjB.isEmpty())
+    {
+        header += QString("\nA: %1\nB: %2").arg(subjA.isEmpty() ? "(no subject)" : subjA, subjB.isEmpty() ? "(no subject)" : subjB);
+    }
+    setDiffStatus(header, QColor("#444"));
 
     for (const QString &line : lines)
     {
@@ -503,8 +554,178 @@ void ProjectWindow::updateStatus()
     m_statusLabel->setText(QString("<b>Path:</b> %1<br><b>Current Branch:</b> %2").arg(m_repoInfo.localPath, QString::fromStdString(branch).toHtmlEscaped()));
     m_commitButton->setText("Commit to " + QString::fromStdString(branch));
     m_proposeChangesButton->setEnabled(!m_repoInfo.isOwner);
+    // Ensure tabs visibility matches role (owner vs collaborator)
+    int changesIdx = m_tabWidget->indexOf(m_changesTab);
+    if (m_repoInfo.isOwner)
+    {
+        if (changesIdx == -1)
+            m_tabWidget->insertTab(0, m_changesTab, "Changes");
+        int proposeIdx = m_tabWidget->indexOf(m_proposeTab);
+        if (proposeIdx != -1)
+            m_tabWidget->removeTab(proposeIdx);
+    }
+    else
+    {
+        if (changesIdx != -1)
+            m_tabWidget->removeTab(changesIdx);
+        if (m_tabWidget->indexOf(m_proposeTab) == -1)
+            m_tabWidget->insertTab(0, m_proposeTab, "Propose");
+    }
     loadBranchList();
     loadCommitLog();
+}
+
+void ProjectWindow::onProposeFilesAddClicked()
+{
+    if (!m_repoInfo.isValid())
+        return;
+    // Use a file dialog rooted at the repo path, allow multiple selection
+    QStringList files = QFileDialog::getOpenFileNames(this, "Select files to propose", m_repoInfo.localPath);
+    if (files.isEmpty())
+        return;
+    QDir repoDir(m_repoInfo.localPath);
+    for (const QString &path : files)
+    {
+        QString rel = repoDir.relativeFilePath(path);
+        if (rel.startsWith(".."))
+            continue; // only within repo
+        bool exists = false;
+        for (int i = 0; i < m_proposeFilesList->count(); ++i)
+        {
+            if (m_proposeFilesList->item(i)->text() == rel)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists)
+            m_proposeFilesList->addItem(rel);
+    }
+}
+
+void ProjectWindow::onProposeFilesRemoveClicked()
+{
+    auto items = m_proposeFilesList->selectedItems();
+    for (QListWidgetItem *it : items)
+    {
+        delete it;
+    }
+}
+
+void ProjectWindow::onSendProposedFilesClicked()
+{
+    if (m_repoInfo.isOwner)
+    {
+        CustomMessageBox::information(this, "Action Not Available", "You are the owner. Use the Changes tab to commit.");
+        return;
+    }
+    QStringList rels;
+    for (int i = 0; i < m_proposeFilesList->count(); ++i)
+        rels << m_proposeFilesList->item(i)->text();
+    if (rels.isEmpty())
+    {
+        CustomMessageBox::warning(this, "No Files", "Please add files to propose.");
+        return;
+    }
+    QString msg = m_proposeCommitMessage->toPlainText().trimmed();
+    if (msg.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Commit Message Required", "Please describe your changes.");
+        return;
+    }
+    std::string err;
+    std::string currentBranch = m_gitBackend.getCurrentBranch(err);
+    if (currentBranch.empty() || currentBranch == "[unborn]")
+    {
+        CustomMessageBox::warning(this, "Cannot Propose", "You must be on a branch to propose changes.");
+        return;
+    }
+    emit proposeFilesRequested(m_repoInfo.ownerPeerId, m_repoInfo.displayName, QString::fromStdString(currentBranch), msg, rels);
+}
+
+void ProjectWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!m_proposeTab || m_repoInfo.isOwner)
+    {
+        event->ignore();
+        return;
+    }
+    if (event->mimeData()->hasUrls())
+        event->acceptProposedAction();
+    else
+        event->ignore();
+}
+
+void ProjectWindow::dropEvent(QDropEvent *event)
+{
+    if (!m_proposeTab || m_repoInfo.isOwner)
+        return;
+    const QMimeData *md = event->mimeData();
+    if (!md->hasUrls())
+        return;
+    for (const QUrl &url : md->urls())
+    {
+        QString local = url.toLocalFile();
+        if (!local.isEmpty())
+        {
+            QFileInfo fi(local);
+            if (fi.isFile())
+                addProposePathIfInsideRepo(local);
+            else if (fi.isDir())
+            {
+                QDir dir(local);
+                QStringList all = dir.entryList(QDir::Files | QDir::NoDotAndDotDot | QDir::AllDirs, QDir::DirsFirst);
+                // Recursively add
+                std::function<void(const QDir &)> addDir = [&](const QDir &d)
+                {
+                    for (const QFileInfo &f : d.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot))
+                    {
+                        if (f.isDir())
+                            addDir(QDir(f.absoluteFilePath()));
+                        else
+                            addProposePathIfInsideRepo(f.absoluteFilePath());
+                    }
+                };
+                addDir(dir);
+            }
+        }
+    }
+    event->acceptProposedAction();
+}
+
+void ProjectWindow::addProposePathIfInsideRepo(const QString &absPath)
+{
+    QDir repoDir(m_repoInfo.localPath);
+    QString rel = repoDir.relativeFilePath(absPath);
+    if (rel.startsWith(".."))
+        return;
+    for (int i = 0; i < m_proposeFilesList->count(); ++i)
+    {
+        if (m_proposeFilesList->item(i)->text() == rel)
+            return;
+    }
+    m_proposeFilesList->addItem(rel);
+}
+
+void ProjectWindow::showDiffForLastCommit()
+{
+    // Set Diffs tab to HEAD~1..HEAD and compute
+    int diffsIndex = m_tabWidget->indexOf(m_diffsTab);
+    if (diffsIndex >= 0)
+        m_tabWidget->setCurrentIndex(diffsIndex);
+    m_commitAInput->setText("HEAD~1");
+    m_commitBInput->setText("HEAD");
+    onComputeDiffClicked();
+}
+
+void ProjectWindow::showDiffForRange(const QString &commitA, const QString &commitB)
+{
+    int diffsIndex = m_tabWidget->indexOf(m_diffsTab);
+    if (diffsIndex >= 0)
+        m_tabWidget->setCurrentIndex(diffsIndex);
+    m_commitAInput->setText(commitA);
+    m_commitBInput->setText(commitB);
+    onComputeDiffClicked();
 }
 
 void ProjectWindow::updateGroupMembers()

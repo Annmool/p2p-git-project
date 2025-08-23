@@ -55,6 +55,7 @@ signals:
     void removeCollaboratorRequested(const QString &localAppId, const QString &peerIdToRemove);
     void fetchBundleRequested(const QString &ownerPeerId, const QString &repoDisplayName);
     void proposeChangesRequested(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch);
+    void proposeFilesRequested(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch, const QString &commitMessage, const QStringList &relativeFilePaths);
 
 private slots:
     void refreshAll();
@@ -62,6 +63,12 @@ private slots:
     void refreshBranches();
     void onFetchClicked();
     void onProposeChangesClicked();
+    void onProposeFilesAddClicked();
+    void onProposeFilesRemoveClicked();
+    void onSendProposedFilesClicked();
+    // Drag-and-drop support
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void checkoutBranch();
     void viewRemoteBranchHistory();
     void onSendGroupMessageClicked();
@@ -88,10 +95,16 @@ private:
     void loadBranchList();
     QWidget *createChangesTab();
     QWidget *createDiffsTab();
+    QWidget *createProposeTab();
     void setDiffStatus(const QString &text, const QColor &color = QColor("#444"));
     bool verifyCommit(const QString &sha, QString &normalizedSha, QString &errorOut);
     bool checkRelatedHistories(const QString &a, const QString &b);
     QString runGit(const QStringList &args, int timeoutMs = 30000, int *exitCodeOut = nullptr);
+    void showDiffForLastCommit();
+
+public:
+    void showDiffForRange(const QString &commitA, const QString &commitB);
+    void addProposePathIfInsideRepo(const QString &absPath);
 
     GitBackend m_gitBackend;
     QString m_appId;
@@ -104,8 +117,9 @@ private:
     QWidget *m_changesTab;
     QWidget *m_collabTab;
     QWidget *m_diffsTab;
+    QWidget *m_proposeTab;
 
-    // History Tab widgets
+    // Commits Tab widgets
     QListWidget *m_commitLogDisplay;
     QComboBox *m_branchComboBox;
     QPushButton *m_refreshButton;
@@ -122,6 +136,13 @@ private:
     QPushButton *m_refreshStatusButton;
     QTextEdit *m_commitMessageInput;
     QPushButton *m_commitButton;
+
+    // Propose Tab widgets (for collaborators)
+    QListWidget *m_proposeFilesList;
+    QPushButton *m_addProposeFilesButton;
+    QPushButton *m_removeProposeFilesButton;
+    QTextEdit *m_proposeCommitMessage;
+    QPushButton *m_sendProposedFilesButton;
 
     // Collaboration Tab widgets
     QListWidget *m_groupMembersList;

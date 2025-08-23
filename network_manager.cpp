@@ -103,6 +103,8 @@ void NetworkManager::acceptPendingTcpConnection(QTcpSocket *pendingSocket)
         QTimer *timer = m_pendingConnections.take(pendingSocket);
         if (timer)
             timer->deleteLater();
+        // Mark as accepted control connection
+        pendingSocket->setProperty("is_transfer_socket", false);
         sendIdentityOverTcp(pendingSocket);
         if (m_socketBuffers.contains(pendingSocket) && !m_socketBuffers[pendingSocket].isEmpty())
         {
@@ -144,6 +146,14 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
         }
     }
+    else if (messageType == "PROPOSE_FILES_META")
+    {
+        QString repoName = payload.value("repoName").toString();
+        QString forBranch = payload.value("forBranch").toString();
+        QString commitMessage = payload.value("commitMessage").toString();
+        int fileCount = payload.value("fileCount").toInt();
+        emit proposeFilesMetaReceived(peerId, repoName, forBranch, commitMessage, fileCount);
+    }
     else
     {
         emit secureMessageReceived(peerId, messageType, payload);
@@ -161,16 +171,22 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         if (m_incomingTransfers.contains(socket))
         {
             IncomingFileTransfer *transfer = m_incomingTransfers.value(socket);
-            qint64 bytesToWrite = qMin((qint64)buffer.size(), transfer->totalSize - transfer->bytesReceived);
-            if (bytesToWrite > 0)
+            QString mode = transfer->properties.value("mode").toString();
+            // For raw transfers (bundles, legacy archives), consume bytes directly
+            if (mode.isEmpty() || mode == "raw")
             {
-                transfer->file.write(buffer.constData(), bytesToWrite);
-                buffer.remove(0, static_cast<int>(bytesToWrite));
-                transfer->bytesReceived += bytesToWrite;
-                emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
+                qint64 bytesToWrite = qMin((qint64)buffer.size(), transfer->totalSize - transfer->bytesReceived);
+                if (bytesToWrite > 0)
+                {
+                    transfer->file.write(buffer.constData(), bytesToWrite);
+                    buffer.remove(0, static_cast<int>(bytesToWrite));
+                    transfer->bytesReceived += bytesToWrite;
+                    emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
+                }
+                if (transfer->bytesReceived < transfer->totalSize)
+                    return;
             }
-            if (transfer->bytesReceived < transfer->totalSize)
-                return;
+            // Else, for encrypted chunk mode, do not consume here; chunks are framed messages handled below
         }
 
         // First, ensure we have at least a complete message type string available
@@ -303,6 +319,9 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                 bool success = (transfer->bytesReceived == transfer->totalSize);
                 emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Transfer complete." : "Size mismatch.");
                 delete transfer;
+                // Only disconnect here if this socket is an explicitly dedicated transfer socket
+                // initiated by us (outgoing). Inbound transfer served over a control connection
+                // must stay connected.
                 if (socket->property("is_transfer_socket").toBool())
                 {
                     socket->disconnectFromHost();
@@ -379,6 +398,134 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             else
             {
                 qWarning() << "Decrypted message was not valid JSON object, raw size=" << decryptedMessage.size();
+            }
+        }
+        else if (messageType == "PROPOSE_FILES_META")
+        {
+            in.startTransaction();
+            // Legacy unencrypted path will not be used; keep parser empty to consume nothing
+            if (!in.commitTransaction())
+            { /* fallthrough */
+            }
+            // Encrypted version will trigger via ENCRYPTED_PAYLOAD case
+        }
+        else if (messageType == "PROPOSE_ARCHIVE_START")
+        {
+            in.startTransaction();
+            QString repoName, forBranch;
+            qint64 totalSize;
+            in >> repoName >> forBranch >> totalSize;
+            if (!in.commitTransaction())
+                return;
+            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".zip";
+            auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
+            transfer->properties.insert("forBranch", forBranch);
+            transfer->properties.insert("mode", "raw");
+            if (transfer->file.open(QIODevice::WriteOnly))
+            {
+                m_incomingTransfers.insert(socket, transfer);
+                emit repoBundleTransferStarted(repoName, totalSize);
+            }
+            else
+            {
+                qWarning() << "Could not open temp file for proposal archive:" << tempPath;
+                delete transfer;
+            }
+        }
+        else if (messageType == "PROPOSE_ARCHIVE_START_ENC")
+        {
+            in.startTransaction();
+            QString repoName, forBranch;
+            qint64 totalSize;
+            in >> repoName >> forBranch >> totalSize;
+            if (!in.commitTransaction())
+                return;
+            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".zip";
+            auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
+            transfer->properties.insert("forBranch", forBranch);
+            transfer->properties.insert("mode", "enc");
+            if (transfer->file.open(QIODevice::WriteOnly))
+            {
+                m_incomingTransfers.insert(socket, transfer);
+                emit repoBundleTransferStarted(repoName, totalSize);
+            }
+            else
+            {
+                qWarning() << "Could not open temp file for encrypted proposal archive:" << tempPath;
+                delete transfer;
+            }
+        }
+        else if (messageType == "PROPOSE_ARCHIVE_CHUNK")
+        {
+            in.startTransaction();
+            QString repoName;
+            QByteArray nonce, ciphertext;
+            in >> repoName >> nonce >> ciphertext;
+            if (!in.commitTransaction())
+                return;
+            if (!m_incomingTransfers.contains(socket))
+                return;
+            IncomingFileTransfer *transfer = m_incomingTransfers.value(socket);
+            if (transfer->repoName != repoName)
+                return;
+            if (transfer->properties.value("mode").toString() != "enc")
+                return;
+
+            QString peerId = m_socketToPeerUsernameMap.value(socket);
+            if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
+            {
+                qWarning() << "Encrypted chunk from unknown peer or missing key";
+                return;
+            }
+
+            QByteArray mySecretKey = m_identityManager->getMyCurve25519SecretKey();
+            QByteArray peerPubKey = m_peerCurve25519PublicKeys.value(peerId);
+            if (ciphertext.size() < crypto_box_MACBYTES)
+            {
+                qWarning() << "Ciphertext too small for chunk";
+                return;
+            }
+
+            QByteArray plaintext(ciphertext.size() - crypto_box_MACBYTES, 0);
+            if (crypto_box_open_easy(
+                    reinterpret_cast<unsigned char *>(plaintext.data()),
+                    reinterpret_cast<const unsigned char *>(ciphertext.constData()),
+                    ciphertext.size(),
+                    reinterpret_cast<const unsigned char *>(nonce.constData()),
+                    reinterpret_cast<const unsigned char *>(peerPubKey.constData()),
+                    reinterpret_cast<const unsigned char *>(mySecretKey.constData())) != 0)
+            {
+                qWarning() << "Failed to decrypt archive chunk";
+                return;
+            }
+
+            transfer->file.write(plaintext);
+            transfer->bytesReceived += plaintext.size();
+            emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
+        }
+        else if (messageType == "PROPOSE_ARCHIVE_END")
+        {
+            in.startTransaction();
+            QString repoName;
+            in >> repoName;
+            if (!in.commitTransaction())
+                return;
+            if (m_incomingTransfers.contains(socket))
+            {
+                IncomingFileTransfer *transfer = m_incomingTransfers.take(socket);
+                QString forBranch = transfer->properties.value("forBranch").toString();
+                transfer->file.close();
+                bool success = (transfer->bytesReceived == transfer->totalSize);
+                if (success)
+                {
+                    QString fromPeer = m_socketToPeerUsernameMap.value(socket);
+                    emit changeProposalArchiveReceived(fromPeer, repoName, forBranch, transfer->tempLocalPath);
+                }
+                else
+                {
+                    QFile::remove(transfer->tempLocalPath);
+                }
+                delete transfer;
             }
         }
         else
@@ -786,12 +933,22 @@ void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QStr
 
     QString recipient = m_socketToPeerUsernameMap.value(targetPeerSocket, "Unknown Peer");
     emit repoBundleSent(repoDisplayName, recipient);
-    // Notify receiver to add repo to managed list
+    // Notify receiver to add repo to managed list using the persistent control connection if possible
+    // to avoid mixing control messages on a short-lived transfer socket.
     QVariantMap payload;
     payload["repoDisplayName"] = repoDisplayName;
     payload["senderPeerId"] = m_myUsername;
     payload["localPathHint"] = ""; // receiver can choose location
-    sendMessageToPeer(targetPeerSocket, "ADD_MANAGED_REPO", {QVariant::fromValue(payload)});
+    QTcpSocket *controlSocket = getSocketForPeer(recipient);
+    if (controlSocket && controlSocket != targetPeerSocket)
+    {
+        sendMessageToPeer(controlSocket, "ADD_MANAGED_REPO", {QVariant::fromValue(payload)});
+    }
+    else
+    {
+        // Fall back to the current socket if no separate control connection exists
+        sendMessageToPeer(targetPeerSocket, "ADD_MANAGED_REPO", {QVariant::fromValue(payload)});
+    }
     QFile::remove(bundleFilePath);
 }
 
@@ -942,9 +1099,13 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
     }
     if (canAccess)
     {
-        // Mark this inbound connection as a temporary transfer socket. It will be closed after sending.
-        socket->setProperty("is_transfer_socket", true);
-        // Cancel pending timer if any to auto-allow transfer
+        // This inbound connection may be a dedicated transfer connection created by the requester,
+        // or it might be the peer's existing control connection. Do NOT mark control sockets as
+        // transfer sockets, otherwise the app will treat them as temporary and drop them.
+        // Simply cancel any pending prompt timer and proceed to serve the request on this socket.
+        // If the requester created a dedicated transfer socket, they will close it from their side
+        // after receiving the bundle end signal; the control connection remains unaffected.
+        // Cancel pending timer if any to auto-allow transfer without prompting.
         if (m_pendingConnections.contains(socket))
         {
             QTimer *t = m_pendingConnections.take(socket);
@@ -998,6 +1159,99 @@ void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QStr
     targetPeerSocket->write(endBlock);
 
     // The temporary bundle file is removed by the caller after sending
+}
+
+void NetworkManager::sendChangeProposalArchive(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &archivePath)
+{
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
+        return;
+    QFile arcFile(archivePath);
+    if (!arcFile.open(QIODevice::ReadOnly))
+        return;
+
+    // Encrypted chunked transfer
+    QString peerId = m_socketToPeerUsernameMap.value(targetPeerSocket);
+    if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
+    {
+        // Fallback to raw if keys unavailable
+        QByteArray startBlock;
+        QDataStream startOut(&startBlock, QIODevice::WriteOnly);
+        startOut.setVersion(QDataStream::Qt_5_15);
+        startOut << QString("PROPOSE_ARCHIVE_START") << repoDisplayName << fromBranch << arcFile.size();
+        targetPeerSocket->write(startBlock);
+
+        char bufferRaw[65536];
+        while (!arcFile.atEnd())
+        {
+            qint64 bytesRead = arcFile.read(bufferRaw, sizeof(bufferRaw));
+            if (bytesRead > 0)
+            {
+                targetPeerSocket->write(bufferRaw, bytesRead);
+                if (!targetPeerSocket->waitForBytesWritten(-1))
+                {
+                    arcFile.close();
+                    return;
+                }
+            }
+        }
+        arcFile.close();
+        QByteArray endBlock;
+        QDataStream endOut(&endBlock, QIODevice::WriteOnly);
+        endOut.setVersion(QDataStream::Qt_5_15);
+        endOut << QString("PROPOSE_ARCHIVE_END") << repoDisplayName;
+        targetPeerSocket->write(endBlock);
+        return;
+    }
+
+    QByteArray startBlock;
+    QDataStream startOut(&startBlock, QIODevice::WriteOnly);
+    startOut.setVersion(QDataStream::Qt_5_15);
+    startOut << QString("PROPOSE_ARCHIVE_START_ENC") << repoDisplayName << fromBranch << arcFile.size();
+    targetPeerSocket->write(startBlock);
+
+    QByteArray recipientPubKey = m_peerCurve25519PublicKeys.value(peerId);
+    QByteArray mySecretKey = m_identityManager->getMyCurve25519SecretKey();
+
+    char buffer[65536];
+    while (!arcFile.atEnd())
+    {
+        qint64 bytesRead = arcFile.read(buffer, sizeof(buffer));
+        if (bytesRead <= 0)
+            break;
+        QByteArray plaintext(buffer, static_cast<int>(bytesRead));
+        QByteArray nonce(crypto_box_NONCEBYTES, 0);
+        randombytes_buf(reinterpret_cast<unsigned char *>(nonce.data()), crypto_box_NONCEBYTES);
+        QByteArray ciphertext(crypto_box_MACBYTES + plaintext.size(), 0);
+        if (crypto_box_easy(
+                reinterpret_cast<unsigned char *>(ciphertext.data()),
+                reinterpret_cast<const unsigned char *>(plaintext.constData()),
+                plaintext.size(),
+                reinterpret_cast<const unsigned char *>(nonce.constData()),
+                reinterpret_cast<const unsigned char *>(recipientPubKey.constData()),
+                reinterpret_cast<const unsigned char *>(mySecretKey.constData())) != 0)
+        {
+            arcFile.close();
+            return;
+        }
+
+        QByteArray chunkBlock;
+        QDataStream chunkOut(&chunkBlock, QIODevice::WriteOnly);
+        chunkOut.setVersion(QDataStream::Qt_5_15);
+        chunkOut << QString("PROPOSE_ARCHIVE_CHUNK") << repoDisplayName << nonce << ciphertext;
+        targetPeerSocket->write(chunkBlock);
+        if (!targetPeerSocket->waitForBytesWritten(-1))
+        {
+            arcFile.close();
+            return;
+        }
+    }
+    arcFile.close();
+
+    QByteArray endBlock;
+    QDataStream endOut(&endBlock, QIODevice::WriteOnly);
+    endOut.setVersion(QDataStream::Qt_5_15);
+    endOut << QString("PROPOSE_ARCHIVE_END") << repoDisplayName;
+    targetPeerSocket->write(endBlock);
 }
 
 DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const

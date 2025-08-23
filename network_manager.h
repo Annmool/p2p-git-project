@@ -55,6 +55,7 @@ public:
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
     void sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath);
+    void sendChangeProposalArchive(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &archivePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
@@ -80,6 +81,8 @@ signals:
     void collaboratorAddedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void collaboratorRemovedReceived(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
     void changeProposalReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
+    void changeProposalArchiveReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &archivePath);
+    void proposeFilesMetaReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &commitMessage, int fileCount);
     void repoBundleTransferStarted(const QString &repoName, qint64 totalBytes);                     // <<< ADDED THIS LINE
     void repoBundleChunkReceived(const QString &repoName, qint64 bytesReceived, qint64 totalBytes); // <<< ADDED THIS LINE
 
