@@ -3,7 +3,7 @@
 
 #include <QWidget>
 #include <QIcon>
-#include "network_manager.h" // For DiscoveredPeerInfo struct
+#include "network_manager.h"    // For DiscoveredPeerInfo struct
 #include "repository_manager.h" // For ManagedRepositoryInfo
 
 QT_BEGIN_NAMESPACE
@@ -28,7 +28,7 @@ public:
     void setMyPeerInfo(const QString &username, const QString &publicKeyHex);
     void updatePeerList(const QMap<QString, DiscoveredPeerInfo> &discoveredPeers, const QList<QString> &connectedPeerIds);
     void updateGroupList(const QList<ManagedRepositoryInfo> &myGroupRepos);
-    void updateGroupMembersList(const ManagedRepositoryInfo& repoInfo, const QList<QString>& connectedPeerIds);
+    void updateGroupMembersList(const ManagedRepositoryInfo &repoInfo, const QList<QString> &connectedPeerIds);
     void logMessage(const QString &message, const QColor &color);
     void logBroadcastMessage(const QString &peerId, const QString &message);
     void logGroupChatMessage(const QString &repoName, const QString &peerId, const QString &message);
@@ -52,6 +52,7 @@ private slots:
 
 private:
     void setupUi();
+    void updateAddCollaboratorButtonState();
 
     NetworkManager *m_networkManager = nullptr;
     QString m_myUsername;
@@ -62,6 +63,7 @@ private:
     QTreeWidget *discoveredPeersTreeWidget;
     QPushButton *connectToPeerButton;
     QPushButton *cloneRepoButton;
+    QPushButton *addCollaboratorButton;
     QListWidget *m_groupMembersList;
     QComboBox *m_groupChatSelector;
     QLineEdit *messageInput;
@@ -70,6 +72,7 @@ private:
 
     QIcon m_peerDisconnectedIcon;
     QIcon m_peerConnectedIcon;
+    QList<QString> m_lastConnectedPeerIds;
 };
 
 #endif // NETWORK_PANEL_H

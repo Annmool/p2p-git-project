@@ -37,21 +37,23 @@ IdentityManager::IdentityManager(const QString &peerNameForPath, const std::stri
     QString sanitizedPeerName = peerNameForPath;
     if (sanitizedPeerName.isEmpty())
         sanitizedPeerName = "default_identity_keys";
-    
+
     sanitizedPeerName.remove(QRegularExpression(QStringLiteral("[^a-zA-Z0-9_.-]")));
     if (sanitizedPeerName.isEmpty())
         sanitizedPeerName = "default_sanitized_identity_keys";
 
     // Construct the full desired path first
     QString fullPath = QDir(appDataBaseLocation).filePath(appName + "/" + sanitizedPeerName);
-    
+
     QDir keyDir(fullPath);
-    if (!keyDir.exists()) {
+    if (!keyDir.exists())
+    {
         // Use mkpath on the QDir object. It will create all necessary parent directories.
-        if (!keyDir.mkpath(".")) {
+        if (!keyDir.mkpath("."))
+        {
             qWarning() << "IdentityManager: Could not create full key directory path:" << keyDir.absolutePath();
             // m_dataPath will remain empty, causing initialization to fail safely.
-            return; 
+            return;
         }
     }
 
@@ -76,6 +78,32 @@ QByteArray IdentityManager::getMyPrivateKeyBytes() const
     return QByteArray(reinterpret_cast<const char *>(m_privateKey), ID_SECRET_KEY_BYTES);
 }
 
+QByteArray IdentityManager::getMyCurve25519PublicKey() const
+{
+    if (!m_keysInitialized)
+        return QByteArray();
+    unsigned char curvePk[crypto_box_PUBLICKEYBYTES];
+    if (crypto_sign_ed25519_pk_to_curve25519(curvePk, m_publicKey) != 0)
+    {
+        qWarning() << "IdentityManager: Failed to convert ed25519 public key to curve25519.";
+        return QByteArray();
+    }
+    return QByteArray(reinterpret_cast<const char *>(curvePk), crypto_box_PUBLICKEYBYTES);
+}
+
+QByteArray IdentityManager::getMyCurve25519SecretKey() const
+{
+    if (!m_keysInitialized)
+        return QByteArray();
+    unsigned char curveSk[crypto_box_SECRETKEYBYTES];
+    if (crypto_sign_ed25519_sk_to_curve25519(curveSk, m_privateKey) != 0)
+    {
+        qWarning() << "IdentityManager: Failed to convert ed25519 secret key to curve25519.";
+        return QByteArray();
+    }
+    return QByteArray(reinterpret_cast<const char *>(curveSk), crypto_box_SECRETKEYBYTES);
+}
+
 bool IdentityManager::initializeKeys()
 {
     if (m_keysInitialized)
@@ -83,7 +111,8 @@ bool IdentityManager::initializeKeys()
 
     // Add a check here. If m_dataPath is empty because the directory creation failed,
     // we cannot proceed.
-    if (m_dataPath.empty()) {
+    if (m_dataPath.empty())
+    {
         qCritical() << "IdentityManager: Key data path is not valid. Cannot initialize keys.";
         return false;
     }

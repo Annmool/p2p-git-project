@@ -12,27 +12,36 @@
 #include "info_dot.h"
 
 // A custom widget for each repository item to achieve the card layout
-class RepoCardWidget : public QWidget {
+class RepoCardWidget : public QWidget
+{
 public:
-    RepoCardWidget(const ManagedRepositoryInfo& info, const QString& myPeerId, QWidget* parent = nullptr) : QWidget(parent) {
+    RepoCardWidget(const ManagedRepositoryInfo &info, const QString &myPeerId, QWidget *parent = nullptr) : QWidget(parent)
+    {
         setObjectName("RepoCardWidget");
-        this->setContentsMargins(0,0,0,0);
-        QVBoxLayout* mainLayout = new QVBoxLayout(this);
+        this->setContentsMargins(0, 0, 0, 0);
+        QVBoxLayout *mainLayout = new QVBoxLayout(this);
         mainLayout->setContentsMargins(12, 12, 12, 12);
-        
-        QLabel* nameLabel = new QLabel(info.displayName, this);
+
+        QLabel *nameLabel = new QLabel(info.displayName, this);
         nameLabel->setObjectName("repoNameLabel");
-        
-        QString ownerText = (info.ownerPeerId == myPeerId) ? "Owner: You" : "Owner: " + info.ownerPeerId;
-        QLabel* detailLabel = new QLabel(ownerText, this);
+
+        QString roleText;
+        if (info.ownerPeerId == myPeerId)
+            roleText = "Role: Owner";
+        else if (info.groupMembers.contains(myPeerId))
+            roleText = "Role: Collaborator";
+        else
+            roleText = "Role: None";
+
+        QString accessText = info.isPublic ? "Access: Public" : "Access: Private";
+        QLabel *detailLabel = new QLabel(roleText + "  •  " + accessText, this);
         detailLabel->setObjectName("repoDetailLabel");
-        
+
         mainLayout->addWidget(nameLabel);
         mainLayout->addWidget(detailLabel);
         mainLayout->addStretch();
     }
 };
-
 
 DashboardPanel::DashboardPanel(QWidget *parent) : QWidget(parent)
 {
@@ -42,7 +51,7 @@ DashboardPanel::DashboardPanel(QWidget *parent) : QWidget(parent)
     connect(m_deleteRepoButton, &QPushButton::clicked, this, &DashboardPanel::onDeleteClicked);
     connect(m_managedReposListWidget, &QListWidget::itemDoubleClicked, this, &DashboardPanel::onRepoDoubleClicked);
     connect(m_managedReposListWidget, &QListWidget::itemSelectionChanged, this, &DashboardPanel::onRepoSelectionChanged);
-    
+
     m_modifyAccessButton->setEnabled(false);
     m_deleteRepoButton->setEnabled(false);
 }
@@ -56,7 +65,7 @@ void DashboardPanel::setupUi()
     m_welcomeHeader->setProperty("heading", "1");
     mainLayout->addWidget(m_welcomeHeader);
 
-    QLabel* subHeader = new QLabel("Ready to explore? Here's everything you can manage and create.", this);
+    QLabel *subHeader = new QLabel("Ready to explore? Here's everything you can manage and create.", this);
     subHeader->setStyleSheet("color: #6c757d;");
     mainLayout->addWidget(subHeader);
 
@@ -72,24 +81,24 @@ void DashboardPanel::setupUi()
     projectsHeaderLayout->addWidget(m_addRepoButton);
     projectsHeaderLayout->addWidget(makeInfoDot("Upload a new repository to start managing it in SyncIt.", this));
     mainLayout->addLayout(projectsHeaderLayout);
-    
+
     m_projectsContentStack = new QStackedWidget(this);
-    
+
     m_managedReposListWidget = new QListWidget(this);
     m_managedReposListWidget->setObjectName("repoListWidget");
     m_managedReposListWidget->setSpacing(5);
-    
+
     m_noProjectsWidget = new QWidget(this);
     m_noProjectsWidget->setStyleSheet("background-color: white; border-radius: 8px; border: 1px dashed #E2E8F0;");
     QVBoxLayout *noProjectsLayout = new QVBoxLayout(m_noProjectsWidget);
     noProjectsLayout->setAlignment(Qt::AlignCenter);
     noProjectsLayout->setSpacing(10);
-    
-    QLabel* noProjectsImage = new QLabel(this);
+
+    QLabel *noProjectsImage = new QLabel(this);
     noProjectsImage->setPixmap(QPixmap(":/icons/folder.svg").scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     noProjectsImage->setAlignment(Qt::AlignCenter);
 
-    QLabel* noProjectsText = new QLabel("No projects yet, upload your first project", this);
+    QLabel *noProjectsText = new QLabel("No projects yet, upload your first project", this);
     noProjectsText->setAlignment(Qt::AlignCenter);
     noProjectsText->setStyleSheet("color: #6c757d; font-size: 16px; border: none; background: transparent;");
 
@@ -120,8 +129,7 @@ void DashboardPanel::setupUi()
     mainLayout->addWidget(m_statusLog);
 }
 
-
-void DashboardPanel::setWelcomeMessage(const QString& username)
+void DashboardPanel::setWelcomeMessage(const QString &username)
 {
     m_welcomeHeader->setText("Hello " + username + "!");
 }
@@ -129,7 +137,7 @@ void DashboardPanel::setWelcomeMessage(const QString& username)
 void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, const QString &myPeerId)
 {
     m_projectsHeaderLabel->setText(QString("Your Projects (%1)").arg(repos.size()));
-    
+
     QString previouslySelectedId = getSelectedRepoId();
     m_managedReposListWidget->clear();
 
@@ -141,9 +149,8 @@ void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, c
     {
         m_projectsContentStack->setCurrentWidget(m_managedReposListWidget);
         QList<ManagedRepositoryInfo> sortedRepos = repos;
-        std::sort(sortedRepos.begin(), sortedRepos.end(), [](const ManagedRepositoryInfo &a, const ManagedRepositoryInfo &b) {
-            return a.displayName.compare(b.displayName, Qt::CaseInsensitive) < 0;
-        });
+        std::sort(sortedRepos.begin(), sortedRepos.end(), [](const ManagedRepositoryInfo &a, const ManagedRepositoryInfo &b)
+                  { return a.displayName.compare(b.displayName, Qt::CaseInsensitive) < 0; });
 
         for (const auto &repoInfo : sortedRepos)
         {
@@ -155,7 +162,8 @@ void DashboardPanel::updateRepoList(const QList<ManagedRepositoryInfo> &repos, c
             m_managedReposListWidget->setItemWidget(item, card);
             item->setData(Qt::UserRole, repoInfo.appId);
 
-            if (repoInfo.appId == previouslySelectedId) {
+            if (repoInfo.appId == previouslySelectedId)
+            {
                 m_managedReposListWidget->setCurrentItem(item);
             }
         }
@@ -172,7 +180,10 @@ void DashboardPanel::logStatus(const QString &message, bool isError)
 QString DashboardPanel::getSelectedRepoId() const
 {
     auto selectedItems = m_managedReposListWidget->selectedItems();
-    if (selectedItems.isEmpty()) { return QString(); }
+    if (selectedItems.isEmpty())
+    {
+        return QString();
+    }
     return selectedItems.first()->data(Qt::UserRole).toString();
 }
 
@@ -185,14 +196,16 @@ void DashboardPanel::onRepoSelectionChanged()
 
 void DashboardPanel::onRepoDoubleClicked(QListWidgetItem *item)
 {
-    if (!item) return;
+    if (!item)
+        return;
     emit openRepoInGitPanel(item->data(Qt::UserRole).toString());
 }
 
 void DashboardPanel::onModifyAccessClicked()
 {
     QString selectedId = getSelectedRepoId();
-    if (!selectedId.isEmpty()) {
+    if (!selectedId.isEmpty())
+    {
         emit modifyAccessClicked(selectedId);
     }
 }
@@ -200,8 +213,8 @@ void DashboardPanel::onModifyAccessClicked()
 void DashboardPanel::onDeleteClicked()
 {
     QString selectedId = getSelectedRepoId();
-    if (!selectedId.isEmpty()) {
+    if (!selectedId.isEmpty())
+    {
         emit deleteRepoClicked(selectedId);
     }
 }
-

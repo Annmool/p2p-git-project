@@ -699,6 +699,11 @@ void CustomInputDialog::setupUi()
     m_comboBox = new QComboBox();
     m_comboBox->hide(); // Initially hidden
 
+    // Add a QListWidget for multi-select
+    m_listWidget = new QListWidget();
+    m_listWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+    m_listWidget->hide();
+
     m_okButton = new QPushButton("OK");
     m_okButton->setObjectName("primaryButton");
     m_cancelButton = new QPushButton("Cancel");
@@ -710,6 +715,7 @@ void CustomInputDialog::setupUi()
     m_mainLayout->addWidget(m_label);
     m_mainLayout->addWidget(m_lineEdit);
     m_mainLayout->addWidget(m_comboBox);
+    m_mainLayout->addWidget(m_listWidget);
     m_mainLayout->addLayout(m_buttonLayout);
     m_mainLayout->setStretch(0, 0);
     m_mainLayout->setStretch(1, 0);
@@ -769,6 +775,21 @@ void CustomInputDialog::applyStyles()
         QLineEdit:focus {
             border: 1px solid #4A90E2;
         }
+        QComboBox, QListWidget {
+            background-color: #F8FAFC;
+            color: #0F4C4A;
+            border: 1px solid #CBD5E1;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        QComboBox QAbstractItemView, QListWidget::item {
+            background-color: #F8FAFC;
+            color: #0F4C4A;
+        }
+        QListWidget::item:selected {
+            background-color: #E0F2FE;
+            color: #0F4C4A;
+        }
     )");
 }
 
@@ -784,15 +805,37 @@ void CustomInputDialog::setTextValue(const QString &text)
 
 QString CustomInputDialog::textValue() const
 {
+    if (m_isMultiSelectMode)
+    {
+        // For multi-select mode, return the first selected item (helpers use selectedItems()).
+        QList<QListWidgetItem *> sel = m_listWidget ? m_listWidget->selectedItems() : QList<QListWidgetItem *>();
+        return sel.isEmpty() ? QString() : sel.first()->text();
+    }
     if (m_isItemMode)
+    {
         return m_comboBox->currentText();
-    else
-        return m_lineEdit->text();
+    }
+    return m_lineEdit->text();
 }
 
 void CustomInputDialog::accept()
 {
-    if (m_lineEdit->text().isEmpty())
+    // Validate per-mode
+    if (m_isMultiSelectMode)
+    {
+        if (!m_listWidget || m_listWidget->selectedItems().isEmpty())
+        {
+            return; // require at least one selection
+        }
+        QDialog::accept();
+        return;
+    }
+    if (m_isItemMode)
+    {
+        QDialog::accept();
+        return;
+    }
+    if (m_lineEdit->text().trimmed().isEmpty())
     {
         return;
     }
@@ -838,6 +881,63 @@ QString CustomInputDialog::getItem(QWidget *parent, const QString &title, const 
     }
 
     return accepted ? dialog.textValue() : QString();
+}
+
+QStringList CustomInputDialog::getMultiItems(QWidget *parent, const QString &title, const QString &label,
+                                             const QStringList &items, bool *ok)
+{
+    CustomInputDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    dialog.setLabelText(label);
+
+    // Switch to multi-select list mode
+    dialog.m_isMultiSelectMode = true;
+    dialog.m_isItemMode = false;
+    dialog.m_lineEdit->hide();
+    dialog.m_comboBox->hide();
+    dialog.m_listWidget->clear();
+    dialog.m_listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    dialog.m_listWidget->show();
+    dialog.m_listWidget->addItems(items);
+    if (!items.isEmpty())
+    {
+        dialog.m_listWidget->setCurrentRow(0);
+        QListWidgetItem *first = dialog.m_listWidget->item(0);
+        if (first)
+        {
+            first->setSelected(true);
+        }
+    }
+
+    bool accepted = (dialog.exec() == QDialog::Accepted);
+    if (ok)
+    {
+        *ok = accepted;
+    }
+
+    return accepted ? dialog.selectedItems() : QStringList();
+}
+
+QStringList CustomInputDialog::selectedItems() const
+{
+    QStringList out;
+    if (m_isMultiSelectMode && m_listWidget)
+    {
+        auto sel = m_listWidget->selectedItems();
+        if (sel.isEmpty())
+        {
+            // If user navigated but didn't explicitly select, treat current item as selection
+            QListWidgetItem *cur = m_listWidget->currentItem();
+            if (cur)
+                sel.append(cur);
+        }
+        for (auto *item : sel)
+        {
+            if (item)
+                out.append(item->text());
+        }
+    }
+    return out;
 }
 
 // ============================================================================

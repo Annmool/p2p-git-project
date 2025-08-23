@@ -72,6 +72,7 @@ MainWindow::MainWindow(QWidget *parent)
     if (welcomeWindow.exec() == QDialog::Accepted)
     {
         m_myUsername = welcomeWindow.getPeerName();
+        qDebug() << "Username chosen:" << m_myUsername;
     }
     else
     {
@@ -106,6 +107,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_networkPanel->setNetworkManager(m_networkManager);
     m_networkPanel->setMyPeerInfo(m_myUsername, QString::fromStdString(m_identityManager->getMyPublicKeyHex()));
+    m_networkPanel->logMessage(QString("App started as '%1'").arg(m_myUsername), QColor("#0F4C4A"));
     updateUiFromBackend();
 
     m_networkManager->startTcpServer();
@@ -594,6 +596,7 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
     }
 
     m_networkPanel->logMessage(QString("Initiating clone for '%1' from '%2'...").arg(repoName, peerId), "blue");
+    qDebug() << "Clone requested from" << peerId << "for repo" << repoName;
     m_networkManager->requestBundleFromPeer(peerId, repoName, fullLocalClonePath);
 }
 
@@ -621,7 +624,8 @@ void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString 
 
     if (m_repoManager->addCollaborator(localAppId, peerIdToAdd))
     {
-        m_dashboardPanel->logStatus(QString("Added '%1' as a collaborator to '%2'.").arg(peerIdToAdd, m_repoManager->getRepositoryInfo(localAppId).displayName), false);
+        // Do not log "added" until recipient accepts/has repo; just trace silently here
+        qDebug() << "Owner updated local group to include" << peerIdToAdd << "for" << m_repoManager->getRepositoryInfo(localAppId).displayName;
 
         ManagedRepositoryInfo updatedRepoInfo = m_repoManager->getRepositoryInfo(localAppId);
 
@@ -639,6 +643,7 @@ void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString 
             if (memberSocket)
             {
                 m_networkManager->sendEncryptedMessage(memberSocket, "COLLABORATOR_ADDED", payload);
+                m_networkPanel->logMessage(QString("Sent collaborator invitation for '%1' to '%2'.").arg(updatedRepoInfo.displayName, memberId), QColor("#0F4C4A"));
             }
         }
 
@@ -680,12 +685,16 @@ void MainWindow::handleAddCollaboratorFromPanel(const QString &peerId)
     }
 
     bool ok;
-    QString repoNameToAdd = CustomInputDialog::getItem(this, "Add Collaborator", QString("Select repository to add '%1' to:").arg(peerId), eligibleRepoNames, 0, false, &ok);
+    QStringList repoNamesToAdd = CustomInputDialog::getMultiItems(this, "Add Collaborator", QString("Select repositories to add '%1' to:").arg(peerId), eligibleRepoNames, &ok);
 
-    if (ok && !repoNameToAdd.isEmpty())
+    if (ok && !repoNamesToAdd.isEmpty())
     {
-        QString localAppId = nameToAppIdMap.value(repoNameToAdd);
-        addCollaboratorToRepo(localAppId, peerId);
+        for (const QString &repoName : repoNamesToAdd)
+        {
+            QString localAppId = nameToAppIdMap.value(repoName);
+            qDebug() << "Adding collaborator" << peerId << "to repo" << repoName << "(" << localAppId << ")";
+            addCollaboratorToRepo(localAppId, peerId);
+        }
     }
 }
 
@@ -712,11 +721,15 @@ void MainWindow::handleAddCollaboratorFromProjectWindow(const QString &localAppI
     }
 
     bool ok;
-    QString peerToAdd = CustomInputDialog::getItem(this, "Add Collaborator", QString("Select a peer to add to '%1':").arg(repoInfo.displayName), eligiblePeers, 0, false, &ok);
+    QStringList peersToAdd = CustomInputDialog::getMultiItems(this, "Add Collaborator", QString("Select peers to add to '%1':").arg(repoInfo.displayName), eligiblePeers, &ok);
 
-    if (ok && !peerToAdd.isEmpty())
+    if (ok && !peersToAdd.isEmpty())
     {
-        addCollaboratorToRepo(localAppId, peerToAdd);
+        for (const QString &peer : peersToAdd)
+        {
+            qDebug() << "Adding collaborator" << peer << "to repo appId" << localAppId;
+            addCollaboratorToRepo(localAppId, peer);
+        }
     }
 }
 
@@ -769,27 +782,16 @@ void MainWindow::handleRemoveCollaboratorFromProjectWindow(const QString &appId,
 
 void MainWindow::handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload)
 {
+    // Ignore legacy auto-add notification; we add only after successful clone
     if (messageType == "ADD_MANAGED_REPO")
     {
-        QString repoName = payload.value("repoDisplayName").toString();
-        QString senderPeerId = payload.value("senderPeerId").toString();
-        QString localPathHint = payload.value("localPathHint").toString();
-        // Check if already managed
-        ManagedRepositoryInfo info = m_repoManager->getCloneInfoByOwnerAndDisplayName(senderPeerId, repoName);
-        if (!info.isValid())
-        {
-            // Use a default path if not present
-            QString baseDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-            QString repoPath = QDir(baseDir).filePath(repoName);
-            m_repoManager->addManagedRepository(repoName, repoPath, false, senderPeerId, "", {senderPeerId, m_myUsername}, false);
-            updateUiFromBackend();
-            m_networkPanel->logMessage(QString("Added '%1' to your managed repositories (via sender notification).").arg(repoName), QColor("#2c7a7b"));
-        }
+        Q_UNUSED(peerId);
+        Q_UNUSED(payload);
+        m_networkPanel->logMessage("Received legacy ADD_MANAGED_REPO notification — ignoring (repo is added after clone).", QColor("#888888"));
+        return;
     }
-    else
-    {
-        qDebug() << "Received generic secure message of type" << messageType << "from" << peerId;
-    }
+
+    qDebug() << "Received generic secure message of type" << messageType << "from" << peerId;
 }
 
 void MainWindow::handleCollaboratorAdded(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers)
@@ -797,12 +799,28 @@ void MainWindow::handleCollaboratorAdded(const QString &peerId, const QString &o
     ManagedRepositoryInfo localRepo = m_repoManager->getRepositoryInfoByOwnerAppId(ownerRepoAppId);
     if (localRepo.isValid())
     {
+        // Already tracking this owner's repo locally; just update members
         m_repoManager->updateGroupMembersAndOwnerAppId(localRepo.appId, ownerRepoAppId, groupMembers);
         m_dashboardPanel->logStatus(QString("Group members updated for '%1' by owner %2.").arg(repoDisplayName, ownerPeerId), false);
+        updateUiFromBackend();
+        return;
+    }
+
+    // New access granted. Prompt to clone now.
+    QString title = "Collaboration Invitation";
+    QString text = QString("You were granted access to '%1' by %2.\n\nDo you want to clone this repository now?")
+                       .arg(repoDisplayName, ownerPeerId);
+    m_networkPanel->logMessage(QString("Received collaborator invitation for '%1' from %2.").arg(repoDisplayName, ownerPeerId), QColor("#0F4C4A"));
+    auto choice = CustomMessageBox::question(this, title, text, CustomMessageBox::Yes | CustomMessageBox::No);
+    if (choice == CustomMessageBox::Yes)
+    {
+        // Reuse existing clone flow which asks for a directory and performs bundle-based clone
+        handleCloneRepo(ownerPeerId, repoDisplayName);
     }
     else
     {
-        m_networkPanel->logMessage(QString("Peer '%1' has granted you access to '%2'. You can now clone it.").arg(ownerPeerId, repoDisplayName), QColor("purple"));
+        // Optionally remember availability for later; show in network panel
+        m_networkPanel->logMessage(QString("You can clone '%1' from %2 later from the Network tab.").arg(repoDisplayName, ownerPeerId), QColor("purple"));
         m_networkManager->addSharedRepoToPeer(ownerPeerId, repoDisplayName);
     }
     updateUiFromBackend();

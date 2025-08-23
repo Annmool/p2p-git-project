@@ -20,6 +20,9 @@ public:
     std::string getMyPublicKeyHex() const;
     QByteArray getMyPublicKeyBytes() const;
     QByteArray getMyPrivateKeyBytes() const;
+    // Curve25519 (X25519) keys derived from Ed25519 for crypto_box
+    QByteArray getMyCurve25519PublicKey() const;
+    QByteArray getMyCurve25519SecretKey() const;
     bool areKeysInitialized() const;
 
     static std::string bytesToHex(const unsigned char *bytes, size_t size);

@@ -121,7 +121,8 @@ private:
     QString m_myUsername;
     IdentityManager *m_identityManager;
     RepositoryManager *m_repoManager_ptr;
-    QMap<QString, QByteArray> m_peerPublicKeys;
+    // Curve25519 public keys for crypto_box (derived from peers' Ed25519 keys)
+    QMap<QString, QByteArray> m_peerCurve25519PublicKeys;
     QUdpSocket *m_udpSocket;
     quint16 m_udpDiscoveryPort;
     QTimer *m_broadcastTimer;

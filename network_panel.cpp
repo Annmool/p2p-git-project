@@ -87,6 +87,8 @@ void NetworkPanel::logGroupChatMessage(const QString &repoName, const QString &p
 
 void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &discoveredPeers, const QList<QString> &connectedPeerIds)
 {
+    // Cache the current connected peers for fast UI checks
+    m_lastConnectedPeerIds = connectedPeerIds;
     // ================== THE FIX STARTS HERE ==================
 
     // 1. Preserve the current selection's identifying information
@@ -152,6 +154,15 @@ void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &disco
 
     // Manually trigger an update of the button states based on the (potentially restored) selection
     onDiscoveredPeerOrRepoSelected(discoveredPeersTreeWidget->currentItem());
+    // Also ensure Add Collaborator button reflects current connection state
+    QTreeWidgetItem *sel = discoveredPeersTreeWidget->currentItem();
+    if (sel && !sel->parent())
+    {
+        bool enable = m_lastConnectedPeerIds.contains(sel->text(0));
+        addCollaboratorButton->setEnabled(enable);
+        addCollaboratorButton->setStyleSheet(QString("background-color: #F8FAFC; color: %1; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 14px; font-weight: bold; min-width: 160px;")
+                                                 .arg(enable ? "#0F4C4A" : "#94A3B8"));
+    }
 
     // =================== THE FIX ENDS HERE ===================
 }
@@ -215,6 +226,7 @@ void NetworkPanel::setupUi()
     discoveredPeersTreeWidget->setHeaderLabels(QStringList() << "Peer / Repository" << "Details");
     discoveredPeersTreeWidget->setColumnCount(2);
     discoveredPeersTreeWidget->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+
     mainLayout->addWidget(discoveredPeersTreeWidget, 1);
 
     QHBoxLayout *actionButtonLayout = new QHBoxLayout();
@@ -224,7 +236,45 @@ void NetworkPanel::setupUi()
     cloneRepoButton->setObjectName("cloneRepoButton");
     actionButtonLayout->addWidget(connectToPeerButton);
     actionButtonLayout->addWidget(cloneRepoButton);
+    // Add as Collaborator button on the same row
+    addCollaboratorButton = new QPushButton("Add as Collaborator", this);
+    addCollaboratorButton->setEnabled(false);
+    addCollaboratorButton->setStyleSheet("background-color: #F8FAFC; color: #94A3B8; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 14px; font-weight: bold; min-width: 160px;");
+    actionButtonLayout->addWidget(addCollaboratorButton);
     mainLayout->addLayout(actionButtonLayout);
+
+    connect(addCollaboratorButton, &QPushButton::clicked, this, [this]()
+            {
+        QTreeWidgetItem *item = discoveredPeersTreeWidget->currentItem();
+        if (item && !item->parent()) {
+            QString peerId = item->text(0);
+            logMessage(QString("Add as Collaborator clicked for '%1'").arg(peerId), QColor("#0F4C4A"));
+            emit addCollaboratorRequested(peerId);
+        } else {
+            logMessage("Add as Collaborator clicked but no connected peer is selected.", Qt::red);
+        } });
+
+    auto updateAddCollabState = [this]()
+    {
+        QTreeWidgetItem *item = discoveredPeersTreeWidget->currentItem();
+        bool enable = false;
+        if (item && !item->parent())
+        {
+            enable = m_lastConnectedPeerIds.contains(item->text(0));
+        }
+        addCollaboratorButton->setEnabled(enable);
+        addCollaboratorButton->setStyleSheet(QString("background-color: #F8FAFC; color: %1; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 14px; font-weight: bold; min-width: 160px;")
+                                                 .arg(enable ? "#0F4C4A" : "#94A3B8"));
+        if (item && !item->parent())
+        {
+            logMessage(QString("Selection changed to '%1' — connected: %2").arg(item->text(0)).arg(enable ? "yes" : "no"), QColor("#666666"));
+        }
+    };
+
+    connect(discoveredPeersTreeWidget, &QTreeWidget::itemSelectionChanged, this, updateAddCollabState);
+    // Also update state when selection changes via currentItemChanged signal
+    connect(discoveredPeersTreeWidget, &QTreeWidget::currentItemChanged, this, [updateAddCollabState](QTreeWidgetItem *, QTreeWidgetItem *)
+            { updateAddCollabState(); });
 
     QLabel *logHeader = new QLabel("<b>Network Log / Broadcasts:</b>", this);
     logHeader->setObjectName("logHeaderLabel");
@@ -260,10 +310,13 @@ void NetworkPanel::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current)
     else
     {
         // It's a peer, enable connecting if not already connected
-        if (m_networkManager)
         {
-            bool isConnected = m_networkManager->getSocketForPeer(current->text(0)) != nullptr;
+            bool isConnected = m_lastConnectedPeerIds.contains(current->text(0));
             connectToPeerButton->setEnabled(!isConnected);
+            // Update Add Collaborator state here too
+            addCollaboratorButton->setEnabled(isConnected);
+            addCollaboratorButton->setStyleSheet(QString("background-color: #F8FAFC; color: %1; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 14px; font-weight: bold; min-width: 160px;")
+                                                     .arg(isConnected ? "#0F4C4A" : "#94A3B8"));
         }
     }
 }
@@ -297,27 +350,10 @@ void NetworkPanel::onSendMessageClicked()
     messageInput->clear();
 }
 
+// Removed right-click context menu for add collaborator. Now handled by dedicated button below peer list.
+
 void NetworkPanel::showContextMenu(const QPoint &pos)
 {
-    QTreeWidgetItem *item = discoveredPeersTreeWidget->itemAt(pos);
-    if (!item || item->parent())
-        return;
-
-    QString peerId = item->text(0);
-    if (!m_networkManager)
-        return;
-
-    bool isConnected = m_networkManager->getSocketForPeer(peerId) != nullptr;
-
-    QMenu contextMenu(this);
-    QAction *addCollabAction = contextMenu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), "Add as Collaborator...");
-    addCollabAction->setEnabled(isConnected);
-
-    QAction *selectedAction = contextMenu.exec(discoveredPeersTreeWidget->mapToGlobal(pos));
-
-    if (selectedAction == addCollabAction)
-    {
-        emit addCollaboratorRequested(peerId);
-    }
+    Q_UNUSED(pos);
+    // Intentionally left blank: right-click menu removed in favor of the dedicated button.
 }
-

@@ -115,7 +115,10 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
 {
     QString messageType = payload.value("__messageType").toString();
     if (messageType.isEmpty())
+    {
+        qWarning() << "Decrypted payload missing __messageType from" << peerId;
         return;
+    }
 
     qDebug() << "Handling encrypted payload of type" << messageType << "from" << peerId;
 
@@ -170,12 +173,19 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                 return;
         }
 
+        // First, ensure we have at least a complete message type string available
         in.startTransaction();
         QString messageType;
         in >> messageType;
+        if (!in.commitTransaction())
+        {
+            // Not enough bytes yet to read the message type
+            return;
+        }
 
         if (messageType == "IDENTITY_HANDSHAKE_V2")
         {
+            in.startTransaction();
             QString peerUsername, peerKeyHex;
             in >> peerUsername >> peerKeyHex;
             if (!in.commitTransaction())
@@ -186,7 +196,24 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             if (expectedPeerId.isEmpty() || expectedPeerId.startsWith("ConnectingTo:") || expectedPeerId == peerUsername)
             {
                 m_socketToPeerUsernameMap.insert(socket, peerUsername);
-                m_peerPublicKeys.insert(peerUsername, QByteArray::fromHex(peerKeyHex.toUtf8()));
+                // Convert peer's Ed25519 verify key to Curve25519 for crypto_box
+                QByteArray edPk = QByteArray::fromHex(peerKeyHex.toUtf8());
+                if (edPk.size() == crypto_sign_PUBLICKEYBYTES)
+                {
+                    unsigned char curvePk[crypto_box_PUBLICKEYBYTES];
+                    if (crypto_sign_ed25519_pk_to_curve25519(curvePk, reinterpret_cast<const unsigned char *>(edPk.constData())) == 0)
+                    {
+                        m_peerCurve25519PublicKeys.insert(peerUsername, QByteArray(reinterpret_cast<const char *>(curvePk), crypto_box_PUBLICKEYBYTES));
+                    }
+                    else
+                    {
+                        qWarning() << "Failed to convert peer" << peerUsername << "ed25519 pk to curve25519; encrypted messages will fail.";
+                    }
+                }
+                else
+                {
+                    qWarning() << "Unexpected peer public key size for" << peerUsername << ":" << edPk.size();
+                }
 
                 if (!m_handshakeSent.contains(socket))
                 {
@@ -230,6 +257,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "REQUEST_REPO_BUNDLE")
         {
+            in.startTransaction();
             QString requestingPeer, repoName, temp;
             in >> requestingPeer >> repoName >> temp;
             if (!in.commitTransaction())
@@ -242,6 +270,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "SEND_REPO_BUNDLE_START")
         {
+            in.startTransaction();
             QString repoName;
             qint64 totalSize;
             in >> repoName >> totalSize;
@@ -262,6 +291,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "SEND_REPO_BUNDLE_END")
         {
+            in.startTransaction();
             QString repoName;
             in >> repoName;
             if (!in.commitTransaction())
@@ -281,6 +311,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "BROADCAST_MESSAGE")
         {
+            in.startTransaction();
             QString message;
             in >> message;
             if (!in.commitTransaction())
@@ -291,6 +322,7 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "GROUP_CHAT_MESSAGE")
         {
+            in.startTransaction();
             QString repoAppId, message;
             in >> repoAppId >> message;
             if (!in.commitTransaction())
@@ -301,23 +333,32 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         }
         else if (messageType == "ENCRYPTED_PAYLOAD")
         {
+            in.startTransaction();
             QByteArray nonce, ciphertext;
             in >> nonce >> ciphertext;
             if (!in.commitTransaction())
+            {
+                qWarning() << "Encrypted payload transaction not committed (partial read).";
                 return;
+            }
 
             QString peerId = m_socketToPeerUsernameMap.value(socket);
-            if (peerId.isEmpty() || !m_peerPublicKeys.contains(peerId))
+            if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
             {
-                qWarning() << "Received encrypted payload from unknown peer or peer with no public key.";
+                qWarning() << "Received encrypted payload from unknown peer or peer with no public key. peerId=" << peerId;
                 continue;
             }
 
-            QByteArray mySecretKey = m_identityManager->getMyPrivateKeyBytes();
-            QByteArray peerPubKey = m_peerPublicKeys.value(peerId);
+            QByteArray mySecretKey = m_identityManager->getMyCurve25519SecretKey();
+            QByteArray peerPubKey = m_peerCurve25519PublicKeys.value(peerId);
 
             QByteArray decryptedMessage(ciphertext.size() - crypto_box_MACBYTES, 0);
 
+            if (ciphertext.size() < crypto_box_MACBYTES)
+            {
+                qWarning() << "Ciphertext too small for crypto_box_open_easy, size=" << ciphertext.size();
+                continue;
+            }
             if (crypto_box_open_easy(
                     reinterpret_cast<unsigned char *>(decryptedMessage.data()),
                     reinterpret_cast<const unsigned char *>(ciphertext.constData()),
@@ -335,11 +376,14 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             {
                 handleEncryptedPayload(peerId, doc.object().toVariantMap());
             }
+            else
+            {
+                qWarning() << "Decrypted message was not valid JSON object, raw size=" << decryptedMessage.size();
+            }
         }
         else
         {
             qWarning() << "Unknown or unexpected message type received:" << messageType << "from" << getPeerDisplayString(socket);
-            in.rollbackTransaction();
             return;
         }
 
@@ -795,7 +839,7 @@ void NetworkManager::onTcpSocketDisconnected()
     QString peerUsername = m_socketToPeerUsernameMap.take(socket);
     if (!peerUsername.isEmpty() && !peerUsername.startsWith("AwaitingID") && !peerUsername.startsWith("Transfer:") && !peerUsername.startsWith("ConnectingTo"))
     {
-        m_peerPublicKeys.remove(peerUsername);
+        m_peerCurve25519PublicKeys.remove(peerUsername);
         emit tcpPeerDisconnected(socket, peerUsername);
     }
     socket->deleteLater();
@@ -846,14 +890,14 @@ void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &mes
     if (!socket)
         return;
     QString peerId = m_socketToPeerUsernameMap.value(socket);
-    if (peerId.isEmpty() || !m_peerPublicKeys.contains(peerId))
+    if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
     {
         qWarning() << "Cannot send encrypted message: Unknown peer or public key for socket.";
         return;
     }
 
-    QByteArray recipientPubKey = m_peerPublicKeys.value(peerId);
-    QByteArray mySecretKey = m_identityManager->getMyPrivateKeyBytes();
+    QByteArray recipientPubKey = m_peerCurve25519PublicKeys.value(peerId);
+    QByteArray mySecretKey = m_identityManager->getMyCurve25519SecretKey();
 
     QVariantMap fullPayload = payload;
     fullPayload["__messageType"] = messageType;
