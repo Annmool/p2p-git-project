@@ -26,6 +26,7 @@ add_executable(${PROJECT_NAME}
     network_panel.cpp
     project_window.cpp
     custom_dialogs.cpp
+    auth_manager.cpp
     welcome_window.cpp
     info_dot.cpp
     res/res.qrc

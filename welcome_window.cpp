@@ -1,7 +1,13 @@
 #include "welcome_window.h"
+#include "auth_manager.h"
+#include "custom_dialogs.h"
 #include <QApplication>
 #include <QScreen>
 #include <QKeyEvent>
+#include <QGroupBox>
+#include <QDesktopServices>
+#include <QTimer>
+#include <cstdio>
 
 WelcomeWindow::WelcomeWindow(const QString &defaultName, QWidget *parent)
     : QDialog(parent),
@@ -10,18 +16,27 @@ WelcomeWindow::WelcomeWindow(const QString &defaultName, QWidget *parent)
     setupUi();
     applyStyles();
 
-    // Set default name
+    // Prefill username fields
     if (!defaultName.isEmpty())
     {
-        m_nameInput->setText(defaultName);
-        m_nameInput->selectAll();
+        if (m_logUserEdit)
+            m_logUserEdit->setText(defaultName);
+        if (m_regUserEdit)
+            m_regUserEdit->setText(defaultName);
     }
 
     // Make the window full screen
     setWindowState(Qt::WindowMaximized);
 
-    // Focus on the input field
-    m_nameInput->setFocus();
+    // Focus on login username
+    if (m_logUserEdit)
+        m_logUserEdit->setFocus();
+
+    // Position close button properly after window is shown
+    QTimer::singleShot(0, this, [this]()
+                       {
+        if (m_closeButton)
+            m_closeButton->move(width() - m_closeButton->width() - 10, 10); });
 }
 
 QString WelcomeWindow::getPeerName() const
@@ -34,24 +49,56 @@ void WelcomeWindow::setupUi()
     setWindowTitle("SyncIt - Setup");
     setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::WindowMinimizeButtonHint);
 
+    // Add close button in top-right corner
+    m_closeButton = new QPushButton("×", this);
+    m_closeButton->setObjectName("closeButton");
+    m_closeButton->setFixedSize(40, 40);
+    m_closeButton->move(width() - 50, 10);
+    m_closeButton->setStyleSheet(
+        "QPushButton { "
+        "background-color: #DC2626; "
+        "color: white; "
+        "border: none; "
+        "border-radius: 20px; "
+        "font-size: 20px; "
+        "font-weight: bold; "
+        "} "
+        "QPushButton:hover { "
+        "background-color: #EF4444; "
+        "} "
+        "QPushButton:pressed { "
+        "background-color: #B91C1C; "
+        "}");
+    connect(m_closeButton, &QPushButton::clicked, this, &WelcomeWindow::reject);
+
     // Main layout
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(40, 60, 40, 60);
+    mainLayout->setContentsMargins(40, 80, 40, 80);
     mainLayout->setSpacing(0);
 
     // Title section
     m_titleLabel = new QLabel("SyncIt", this);
     m_titleLabel->setObjectName("welcomeTitle");
     m_titleLabel->setAlignment(Qt::AlignCenter);
+    // Make title use system font, bold, larger size and apply heading property for theme
+    QFont titleFont = QApplication::font();
+    titleFont.setBold(true);
+    titleFont.setPointSize(48);
+    m_titleLabel->setFont(titleFont);
+    m_titleLabel->setProperty("heading", "1");
 
     m_subtitleLabel = new QLabel("Your Code, Your Network : True P2P", this);
     m_subtitleLabel->setObjectName("welcomeSubtitle");
     m_subtitleLabel->setAlignment(Qt::AlignCenter);
+    QFont subtitleFont = QApplication::font();
+    subtitleFont.setPointSize(18);
+    subtitleFont.setWeight(QFont::Light);
+    m_subtitleLabel->setFont(subtitleFont);
 
     mainLayout->addWidget(m_titleLabel);
-    mainLayout->addSpacing(20);
+    mainLayout->addSpacing(16);
     mainLayout->addWidget(m_subtitleLabel);
-    mainLayout->addSpacing(80);
+    mainLayout->addSpacing(60);
 
     // Center the card
     QHBoxLayout *cardCenterLayout = new QHBoxLayout();
@@ -60,159 +107,127 @@ void WelcomeWindow::setupUi()
     // Card frame
     m_cardFrame = new QFrame(this);
     m_cardFrame->setObjectName("welcomeCard");
-    m_cardFrame->setFixedSize(500, 300);
+    m_cardFrame->setFixedWidth(1100);
+    m_cardFrame->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
     QVBoxLayout *cardLayout = new QVBoxLayout(m_cardFrame);
-    cardLayout->setContentsMargins(40, 40, 40, 40);
+    cardLayout->setContentsMargins(50, 50, 50, 50);
     cardLayout->setSpacing(20);
 
-    // Card content
-    m_fieldLabel = new QLabel("Peer Username", this);
-    m_fieldLabel->setObjectName("welcomeFieldLabel");
+    // Build Login section
+    QGroupBox *loginBox = new QGroupBox("Login", m_cardFrame);
+    loginBox->setObjectName("loginBox");
+    QVBoxLayout *loginLayout = new QVBoxLayout(loginBox);
+    loginLayout->setContentsMargins(20, 20, 20, 20);
+    loginLayout->setSpacing(12);
 
+    QLabel *loginInfo = new QLabel("Enter your username and password:", loginBox);
+    loginInfo->setProperty("heading", "2");
+    m_logUserEdit = new QLineEdit(loginBox);
+    m_logUserEdit->setPlaceholderText("Username");
+    m_logPassEdit = new QLineEdit(loginBox);
+    m_logPassEdit->setPlaceholderText("Password");
+    m_logPassEdit->setEchoMode(QLineEdit::Password);
+    m_logButton = new QPushButton("Login", loginBox);
+    m_logButton->setObjectName("primaryButton");
+    connect(m_logButton, &QPushButton::clicked, this, &WelcomeWindow::onLoginClicked);
+
+    // Forgot password link and recovery row
+    m_forgotLink = new QLabel("<a href=\"#\">Forgot password?</a>", loginBox);
+    m_forgotLink->setObjectName("forgotLink");
+    m_forgotLink->setTextFormat(Qt::RichText);
+    m_forgotLink->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_forgotLink->setOpenExternalLinks(false);
+    connect(m_forgotLink, &QLabel::linkActivated, this, [this](const QString &)
+            { onForgotPasswordClicked(); });
+
+    m_recoveryRow = new QWidget(loginBox);
+    QHBoxLayout *recLay = new QHBoxLayout(m_recoveryRow);
+    recLay->setContentsMargins(0, 0, 0, 0);
+    m_recoveryEdit = new QLineEdit(m_recoveryRow);
+    m_recoveryEdit->setPlaceholderText("Enter recovery key (<= 30 chars)");
+    m_recoveryEdit->setMaxLength(30);
+    m_showPwButton = new QPushButton("Show Password", m_recoveryRow);
+    connect(m_showPwButton, &QPushButton::clicked, this, &WelcomeWindow::onShowRecoveredPassword);
+    recLay->addWidget(m_recoveryEdit, 1);
+    recLay->addWidget(m_showPwButton);
+    m_recoveryRow->setVisible(false);
+
+    loginLayout->addWidget(loginInfo);
+    loginLayout->addWidget(m_logUserEdit);
+    loginLayout->addWidget(m_logPassEdit);
+    loginLayout->addWidget(m_logButton);
+    loginLayout->addWidget(m_forgotLink);
+    loginLayout->addWidget(m_recoveryRow);
+
+    // Build Register section
+    QGroupBox *regBox = new QGroupBox("Register", m_cardFrame);
+    regBox->setObjectName("registerBox");
+    QVBoxLayout *regLayout = new QVBoxLayout(regBox);
+    regLayout->setContentsMargins(20, 20, 20, 20);
+    regLayout->setSpacing(12);
+    QLabel *regInfo = new QLabel("Create a new profile:", regBox);
+    regInfo->setProperty("heading", "2");
+    m_regUserEdit = new QLineEdit(regBox);
+    m_regUserEdit->setPlaceholderText("Choose a username");
+    m_regPassEdit = new QLineEdit(regBox);
+    m_regPassEdit->setPlaceholderText("Choose a password");
+    m_regPassEdit->setEchoMode(QLineEdit::Password);
+    m_regConfirmEdit = new QLineEdit(regBox);
+    m_regConfirmEdit->setPlaceholderText("Confirm password");
+    m_regConfirmEdit->setEchoMode(QLineEdit::Password);
+    m_regButton = new QPushButton("Register", regBox);
+    m_regButton->setObjectName("primaryButton");
+    connect(m_regButton, &QPushButton::clicked, this, &WelcomeWindow::onRegisterClicked);
+    regLayout->addWidget(regInfo);
+    regLayout->addWidget(m_regUserEdit);
+    regLayout->addWidget(m_regPassEdit);
+    regLayout->addWidget(m_regConfirmEdit);
+    regLayout->addWidget(m_regButton);
+
+    // Add sections side-by-side with a vertical divider
+    QHBoxLayout *row = new QHBoxLayout();
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(40);
+
+    QWidget *divider = new QWidget(m_cardFrame);
+    divider->setObjectName("authDivider");
+    divider->setFixedWidth(2);
+    divider->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+
+    row->addWidget(loginBox, 1);
+    row->addWidget(divider);
+    row->addWidget(regBox, 1);
+
+    cardLayout->addLayout(row);
+
+    // Legacy controls hidden (kept for stylesheet compatibility)
+    m_fieldLabel = new QLabel(this);
+    m_fieldLabel->setVisible(false);
     m_nameInput = new QLineEdit(this);
-    m_nameInput->setObjectName("welcomeInput");
-    m_nameInput->setPlaceholderText("Enter your peer name...");
-    m_nameInput->setMinimumHeight(50);
-
-    // Button layout
-    QHBoxLayout *buttonLayout = new QHBoxLayout();
-
-    m_cancelButton = new QPushButton("Cancel", this);
-    m_cancelButton->setObjectName("welcomeCancelButton");
-    m_cancelButton->setMinimumHeight(45);
-    m_cancelButton->setMinimumWidth(120);
-
-    m_continueButton = new QPushButton("Continue", this);
-    m_continueButton->setObjectName("welcomeContinueButton");
-    m_continueButton->setMinimumHeight(45);
-    m_continueButton->setMinimumWidth(120);
-    m_continueButton->setDefault(true);
-
-    buttonLayout->addWidget(m_cancelButton);
-    buttonLayout->addStretch();
-    buttonLayout->addWidget(m_continueButton);
-
-    // Add to card
-    cardLayout->addWidget(m_fieldLabel);
-    cardLayout->addWidget(m_nameInput);
-    cardLayout->addStretch();
-    cardLayout->addLayout(buttonLayout);
+    m_nameInput->setVisible(false);
+    m_continueButton = new QPushButton(this);
+    m_continueButton->setVisible(false);
+    m_cancelButton = new QPushButton(this);
+    m_cancelButton->setVisible(false);
 
     cardCenterLayout->addWidget(m_cardFrame);
     cardCenterLayout->addStretch();
 
     mainLayout->addLayout(cardCenterLayout);
     mainLayout->addStretch();
-
-    // Connect signals
-    connect(m_continueButton, &QPushButton::clicked, this, &WelcomeWindow::onContinueClicked);
-    connect(m_cancelButton, &QPushButton::clicked, this, &WelcomeWindow::onCancelClicked);
-    connect(m_nameInput, &QLineEdit::returnPressed, this, &WelcomeWindow::onContinueClicked);
+    // No legacy signal connections
 }
 
 void WelcomeWindow::applyStyles()
 {
-    setStyleSheet(R"(
-        WelcomeWindow {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                      stop:0 #0A3A35, stop:1 #0F4C4A);
-        }
-        
-        QLabel#welcomeTitle {
-            font-size: 72px;
-            font-weight: bold;
-            color: #FFFFFF;
-            margin: 20px 0;
-        }
-        
-        QLabel#welcomeSubtitle {
-            font-size: 24px;
-            font-weight: 300;
-            color: #B8E6E1;
-            margin: 10px 0;
-        }
-        
-        QFrame#welcomeCard {
-            background-color: rgba(255, 255, 255, 0.95);
-            border-radius: 20px;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-        }
-        
-        QLabel#welcomeFieldLabel {
-            font-size: 18px;
-            font-weight: 600;
-            color: #0F4C4A;
-            margin-bottom: 8px;
-        }
-        
-        QLineEdit#welcomeInput {
-            font-size: 16px;
-            padding: 15px;
-            border: 2px solid #0F4C4A;
-            border-radius: 10px;
-            background-color: #FFFFFF;
-            color: #333333;
-        }
-        
-        QLineEdit#welcomeInput:focus {
-            border-color: #17C6B6;
-            outline: none;
-        }
-        
-        QPushButton#welcomeContinueButton {
-            background-color: #0F4C4A;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            padding: 12px 24px;
-        }
-        
-        QPushButton#welcomeContinueButton:hover {
-            background-color: #17C6B6;
-        }
-        
-        QPushButton#welcomeContinueButton:pressed {
-            background-color: #0D403D;
-        }
-        
-        QPushButton#welcomeCancelButton {
-            background-color: transparent;
-            color: #666666;
-            border: 2px solid #CCCCCC;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 500;
-            padding: 12px 24px;
-        }
-        
-        QPushButton#welcomeCancelButton:hover {
-            background-color: #F5F5F5;
-            border-color: #999999;
-            color: #333333;
-        }
-        
-        QPushButton#welcomeCancelButton:pressed {
-            background-color: #E5E5E5;
-        }
-    )");
+    // Use global styles.qss. Optionally tweak the forgot-password link.
+    setStyleSheet("");
 }
 
 void WelcomeWindow::onContinueClicked()
 {
-    QString name = m_nameInput->text().trimmed();
-    if (name.isEmpty())
-    {
-        m_nameInput->setFocus();
-        m_nameInput->setStyleSheet(m_nameInput->styleSheet() + "; border-color: #E74C3C;");
-        return;
-    }
-
-    m_peerName = name;
-    emit nameEntered(name);
-    accept();
+    // Not used in new UI
 }
 
 void WelcomeWindow::onCancelClicked()
@@ -230,4 +245,138 @@ void WelcomeWindow::keyPressEvent(QKeyEvent *event)
     {
         QDialog::keyPressEvent(event);
     }
+}
+
+void WelcomeWindow::resizeEvent(QResizeEvent *event)
+{
+    if (m_closeButton)
+    {
+        m_closeButton->move(width() - m_closeButton->width() - 10, 10);
+    }
+    QDialog::resizeEvent(event);
+}
+
+// ---- New auth logic ----
+void WelcomeWindow::onRegisterClicked()
+{
+    QString u = m_regUserEdit->text().trimmed();
+    QString p = m_regPassEdit->text();
+    QString c = m_regConfirmEdit->text();
+
+    if (u.isEmpty() || p.isEmpty() || c.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Missing Fields", "Please fill username, password, and confirm password.");
+        return;
+    }
+    if (p != c)
+    {
+        CustomMessageBox::warning(this, "Password Mismatch", "Password and confirmation do not match.");
+        return;
+    }
+
+    // Inform user before proceeding that a recovery key will be downloaded
+    CustomMessageBox::information(this, "Recovery Key Notice",
+                                  "A recovery key will be generated and you will be asked to save it now.\n"
+                                  "If you cancel or the save fails, registration will be canceled.");
+
+    QString err, token, profilePath;
+    if (!AuthManager::registerUser(u, p, err, token, profilePath))
+    {
+        if (err.contains("exists", Qt::CaseInsensitive))
+            CustomMessageBox::warning(this, "Profile Exists", "Profile already exists, please login!");
+        else
+            CustomMessageBox::critical(this, "Registration Failed", err);
+        return;
+    }
+
+    // Save recovery key file
+    QString savedPath = AuthManager::saveRecoveryTokenToFile(u, token, this);
+    if (savedPath.isEmpty())
+    {
+        // Roll back registration to keep the process atomic
+        bool removed = false;
+        if (!profilePath.isEmpty())
+        {
+            // Use standard remove to avoid extra QtCore includes
+            QByteArray p = profilePath.toLocal8Bit();
+            removed = (std::remove(p.constData()) == 0);
+        }
+        QString msg = removed
+                          ? "Registration has been canceled because the recovery key was not saved. Please register again."
+                          : QString("Registration was canceled, but failed to delete the created profile file:\n%1\nPlease remove it manually.").arg(profilePath);
+        CustomMessageBox::critical(this, "Registration Canceled", msg);
+        return;
+    }
+    else
+    {
+        CustomMessageBox::information(this, "Registered Successfully",
+                                      QString("Your profile has been created.\n\nRecovery key was saved to:\n%1\n\nStore it safely. Please login now.").arg(savedPath));
+    }
+
+    // Prefill login and focus
+    m_logUserEdit->setText(u);
+    m_logPassEdit->clear();
+    m_logUserEdit->setFocus();
+}
+
+void WelcomeWindow::onLoginClicked()
+{
+    QString u = m_logUserEdit->text().trimmed();
+    QString p = m_logPassEdit->text();
+
+    if (u.isEmpty() || p.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Missing Fields", "Please enter username and password.");
+        return;
+    }
+    if (!AuthManager::userExists(u))
+    {
+        CustomMessageBox::warning(this, "Profile Not Found", "No profile found. Please register first, then login.");
+        return;
+    }
+
+    QString err;
+    if (!AuthManager::loginUser(u, p, err))
+    {
+        CustomMessageBox::critical(this, "Login Failed", err);
+        return;
+    }
+
+    m_peerName = u;
+    accept();
+}
+
+void WelcomeWindow::onForgotPasswordClicked()
+{
+    if (!m_recoveryRow)
+        return;
+    m_recoveryRow->setVisible(!m_recoveryRow->isVisible());
+    if (m_recoveryRow->isVisible())
+        m_recoveryEdit->setFocus();
+}
+
+void WelcomeWindow::onShowRecoveredPassword()
+{
+    QString u = m_logUserEdit->text().trimmed();
+    QString token = m_recoveryEdit->text().trimmed();
+
+    if (u.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Enter Username", "Please enter the username whose password you want to recover.");
+        return;
+    }
+    if (token.isEmpty())
+    {
+        CustomMessageBox::warning(this, "Enter Recovery Key", "Please enter the recovery key.");
+        return;
+    }
+
+    QString err, pw;
+    if (!AuthManager::recoverPassword(u, token, pw, err))
+    {
+        CustomMessageBox::critical(this, "Recovery Failed", err);
+        return;
+    }
+
+    CustomMessageBox::information(this, "Recovered Password", QString("Your password is:\n\n%1").arg(pw));
 }

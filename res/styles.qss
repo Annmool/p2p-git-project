@@ -853,3 +853,69 @@ QScrollBar::add-page:horizontal,
 QScrollBar::sub-page:horizontal {
     background: transparent;
 }
+
+/* === Welcome Screen (Auth) === */
+WelcomeWindow {
+    background-color: #0F4C4A; /* Same as primary button color (teal) */
+}
+
+WelcomeWindow QLabel#welcomeTitle {
+    color: #FFFFFF; /* Bold white for title */
+    margin-top: 16px;
+    margin-bottom: 8px;
+}
+
+WelcomeWindow QLabel#welcomeSubtitle {
+    color: #FFFFFF; /* White for subtitle */
+    margin-bottom: 16px;
+}
+
+WelcomeWindow QFrame#welcomeCard {
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+WelcomeWindow QGroupBox#loginBox,
+WelcomeWindow QGroupBox#registerBox {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0; /* slate-200 */
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 4px;
+}
+WelcomeWindow QGroupBox#loginBox::title,
+WelcomeWindow QGroupBox#registerBox::title {
+    color: #0F4C4A;
+    font-weight: 600;
+    padding: 4px 6px;
+    font-size: 16px;
+}
+WelcomeWindow QLabel[heading="2"] {
+    margin-top: 4px;
+    margin-bottom: 12px;
+    color: #334155;
+}
+WelcomeWindow QLineEdit {
+    min-height: 40px;
+    font-size: 14px;
+    padding: 12px;
+}
+WelcomeWindow QPushButton#primaryButton {
+    min-height: 42px;
+    font-size: 15px;
+    font-weight: 600;
+}
+WelcomeWindow QLabel#forgotLink {
+    color: #0F4C4A;
+    padding: 8px 0;
+}
+WelcomeWindow QLabel#forgotLink:hover {
+    color: #14625F;
+}
+/* Vertical divider between login and register */
+WelcomeWindow QWidget#authDivider {
+    background-color: #CBD5E1; /* slightly darker for better visibility */
+    border-radius: 1px;
+}
