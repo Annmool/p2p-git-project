@@ -204,6 +204,8 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                     if (crypto_sign_ed25519_pk_to_curve25519(curvePk, reinterpret_cast<const unsigned char *>(edPk.constData())) == 0)
                     {
                         m_peerCurve25519PublicKeys.insert(peerUsername, QByteArray(reinterpret_cast<const char *>(curvePk), crypto_box_PUBLICKEYBYTES));
+                        // Flush any queued encrypted messages for this peer now that we have their pubkey
+                        flushQueuedEncryptedMessagesForPeer(peerUsername);
                     }
                     else
                     {
@@ -312,10 +314,11 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         else if (messageType == "BROADCAST_MESSAGE")
         {
             in.startTransaction();
-            QString message;
-            in >> message;
+            QByteArray messageBa;
+            in >> messageBa;
             if (!in.commitTransaction())
                 return;
+            QString message = QString::fromUtf8(messageBa);
             QString peerUsername = m_socketToPeerUsernameMap.value(socket);
             if (!peerUsername.isEmpty())
                 emit broadcastMessageReceived(socket, peerUsername, message);
@@ -323,10 +326,12 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         else if (messageType == "GROUP_CHAT_MESSAGE")
         {
             in.startTransaction();
-            QString repoAppId, message;
-            in >> repoAppId >> message;
+            QByteArray repoAppIdBa, messageBa;
+            in >> repoAppIdBa >> messageBa;
             if (!in.commitTransaction())
                 return;
+            QString repoAppId = QString::fromUtf8(repoAppIdBa);
+            QString message = QString::fromUtf8(messageBa);
             QString peerUsername = m_socketToPeerUsernameMap.value(socket);
             if (!peerUsername.isEmpty())
                 emit groupMessageReceived(peerUsername, repoAppId, message);
@@ -673,7 +678,19 @@ void NetworkManager::sendMessageToPeer(QTcpSocket *peerSocket, const QString &me
     out << messageType;
     for (const QVariant &arg : args)
     {
-        out << arg;
+        // Write QStrings as UTF-8 byte arrays so the receiver can reliably decode with fromUtf8()
+        if (arg.userType() == QMetaType::QString)
+        {
+            out << arg.toString().toUtf8();
+        }
+        else if (arg.canConvert<QByteArray>())
+        {
+            out << arg.toByteArray();
+        }
+        else
+        {
+            out << arg;
+        }
     }
     peerSocket->write(block);
 }
@@ -691,7 +708,13 @@ void NetworkManager::sendGroupChatMessage(const QString &repoAppId, const QStrin
     if (!m_repoManager_ptr)
         return;
 
+    // repoAppId may be either a local appId (owner) or an ownerRepoAppId (for non-owners).
     ManagedRepositoryInfo repoInfo = m_repoManager_ptr->getRepositoryInfo(repoAppId);
+    if (repoInfo.appId.isEmpty())
+    {
+        // Try resolving as ownerRepoAppId for clones and non-owner instances
+        repoInfo = m_repoManager_ptr->getRepositoryInfoByOwnerAppId(repoAppId);
+    }
     if (repoInfo.appId.isEmpty())
         return;
 
@@ -719,12 +742,10 @@ void NetworkManager::sendIdentityOverTcp(QTcpSocket *socket)
     QDataStream out(&block, QIODevice::WriteOnly);
     out.setVersion(QDataStream::Qt_5_15);
 
-    QString expectedPeerId = m_socketToPeerUsernameMap.value(socket, "");
-    if (expectedPeerId.startsWith("ConnectingTo:"))
-    {
-        expectedPeerId.remove("ConnectingTo:");
-        m_socketToPeerUsernameMap.insert(socket, expectedPeerId);
-    }
+    // Keep any 'ConnectingTo:' marker until the identity handshake completes on this socket.
+    // This prevents the UI from treating a socket as "connected" before the peer's app-level
+    // identity handshake has been exchanged and validated.
+    Q_UNUSED(socket);
 
     out << QString("IDENTITY_HANDSHAKE_V2") << m_myUsername << QString::fromStdString(m_identityManager->getMyPublicKeyHex());
     socket->write(block);
@@ -892,7 +913,10 @@ void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &mes
     QString peerId = m_socketToPeerUsernameMap.value(socket);
     if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
     {
-        qWarning() << "Cannot send encrypted message: Unknown peer or public key for socket.";
+        // Queue the encrypted intent so we can send it once the handshake completes and
+        // we have the peer's Curve25519 public key.
+        qWarning() << "Peer public key not available yet for" << peerId << "; queuing message of type" << messageType;
+        m_queuedEncryptedMessages[peerId].append(qMakePair(messageType, payload));
         return;
     }
 
@@ -925,6 +949,20 @@ void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &mes
     out.setVersion(QDataStream::Qt_5_15);
     out << QString("ENCRYPTED_PAYLOAD") << nonce << ciphertext;
     socket->write(block);
+}
+
+void NetworkManager::flushQueuedEncryptedMessagesForPeer(const QString &peerId)
+{
+    auto it = m_queuedEncryptedMessages.find(peerId);
+    if (it == m_queuedEncryptedMessages.end())
+        return;
+    QList<QPair<QString, QVariantMap>> queued = it.value();
+    m_queuedEncryptedMessages.remove(peerId);
+    QTcpSocket *s = getSocketForPeer(peerId);
+    for (const auto &p : queued)
+    {
+        sendEncryptedMessage(s, p.first, p.second);
+    }
 }
 
 void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName)

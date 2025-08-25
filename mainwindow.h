@@ -88,6 +88,7 @@ private slots:
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg);
     void handleGroupMessage(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message);
+    void handleDisconnectFromPeer(const QString &peerId);
     void handleCollaboratorAdded(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers);
     void handleCollaboratorRemoved(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName);
     void updateUiFromBackend();

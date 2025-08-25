@@ -236,6 +236,15 @@ void NetworkPanel::setupUi()
     cloneRepoButton->setObjectName("cloneRepoButton");
     actionButtonLayout->addWidget(connectToPeerButton);
     actionButtonLayout->addWidget(cloneRepoButton);
+    // Disconnect button (same visual prominence as Connect)
+    disconnectFromPeerButton = new QPushButton("Disconnect from Peer", this);
+    disconnectFromPeerButton->setObjectName("disconnectFromPeerButton");
+    // Hidden by default; only visible when a connected peer is selected
+    disconnectFromPeerButton->setVisible(false);
+    // Use a clear standard "close" icon and a helpful tooltip
+    disconnectFromPeerButton->setIcon(this->style()->standardIcon(QStyle::SP_DialogCloseButton));
+    disconnectFromPeerButton->setToolTip("Disconnect from the currently selected peer");
+    actionButtonLayout->addWidget(disconnectFromPeerButton);
     // Add as Collaborator button on the same row
     addCollaboratorButton = new QPushButton("Add as Collaborator", this);
     addCollaboratorButton->setEnabled(false);
@@ -276,6 +285,17 @@ void NetworkPanel::setupUi()
     connect(discoveredPeersTreeWidget, &QTreeWidget::currentItemChanged, this, [updateAddCollabState](QTreeWidgetItem *, QTreeWidgetItem *)
             { updateAddCollabState(); });
 
+    // Wire disconnect button to emit signal for the currently selected peer
+    connect(disconnectFromPeerButton, &QPushButton::clicked, this, [this]()
+            {
+        QTreeWidgetItem *item = discoveredPeersTreeWidget->currentItem();
+        if (item && !item->parent()) {
+            emit disconnectFromPeerRequested(item->text(0));
+        } else {
+            logMessage("Disconnect clicked but no connected peer is selected.", Qt::red);
+        }
+    });
+
     QLabel *logHeader = new QLabel("<b>Network Log / Broadcasts:</b>", this);
     logHeader->setObjectName("logHeaderLabel");
     mainLayout->addWidget(logHeader);
@@ -313,6 +333,8 @@ void NetworkPanel::onDiscoveredPeerOrRepoSelected(QTreeWidgetItem *current)
         {
             bool isConnected = m_lastConnectedPeerIds.contains(current->text(0));
             connectToPeerButton->setEnabled(!isConnected);
+            // Show the disconnect button only when the selected peer is connected
+            disconnectFromPeerButton->setVisible(isConnected);
             // Update Add Collaborator state here too
             addCollaboratorButton->setEnabled(isConnected);
             addCollaboratorButton->setStyleSheet(QString("background-color: #F8FAFC; color: %1; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 14px; font-weight: bold; min-width: 160px;")
