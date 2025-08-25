@@ -8,8 +8,10 @@
 #include <QTcpSocket>
 #include <QHostAddress>
 #include <QDateTime>
+#include <QVariant>
 #include "network_manager.h"
 #include "dashboard_panel.h"
+#include "notifications_panel.h"
 
 // Full includes for classes used in the nested UserProfileWidget
 #include <QHBoxLayout>
@@ -37,6 +39,9 @@ public:
 public slots:
     void handleFetchBundleRequest(const QString &ownerPeerId, const QString &repoDisplayName);
     void handleProposeChangesRequest(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch);
+    void handleProposeFilesRequest(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch, const QString &commitMessage, const QStringList &relativeFilePaths);
+    void handleProposeFilesMeta(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &commitMessage, int fileCount);
+    void handleChangeProposalArchiveReceived(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &archivePath);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -121,13 +126,35 @@ private:
     QMap<QString, ProjectWindow *> m_projectWindows;
     DashboardPanel *m_dashboardPanel;
     NetworkPanel *m_networkPanel;
+    NotificationsPanel *m_notificationsPanel;
     QStackedWidget *m_mainContentWidget;
     QWidget *m_sidebarPanel;
     QToolButton *m_dashboardButton;
     QToolButton *m_networkButton;
+    QToolButton *m_notificationsButton;
 
     // Track last reported progress percentage per repo to avoid spammy logs
     QHash<QString, int> m_cloneProgressPct;
+
+    // Pair meta (commit message, counts) with incoming archive by fromPeer|repoName
+    QHash<QString, QVariantMap> m_pendingArchiveProposalsMeta;
+    QSet<QString> m_shownProposalMetaNotices;
+    // Track keys (peer|repo) where user clicked "Review Diffs" to avoid duplicate apply notifications
+    QSet<QString> m_reviewClickedForProposals;
+
+    // Track prepared preview worktrees for proposed file archives keyed by fromPeer|repoName
+    struct PendingProposalPreview
+    {
+        ManagedRepositoryInfo repoInfo;
+        QString wtPath;
+        QString prevHeadSha;
+        QString gitExe;
+        QString archivePath;
+        QString commitMessage;
+    };
+    QHash<QString, PendingProposalPreview> m_pendingProposalPreviews;
+
+    void notify(const QString &title, const QString &message, const QList<NotificationAction> &actions = {});
 
     // Progress dialog for repository transfers
     class CustomProgressDialog *m_transferProgressDialog;

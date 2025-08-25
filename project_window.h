@@ -48,6 +48,7 @@ public:
 
 public slots:
     void displayGroupMessage(const QString &peerId, const QString &message);
+    void handleProposalReviewAccepted(const QString &ownerPeerId, const QString &repoName, const QString &forBranch, bool accepted);
 
 signals:
     void groupMessageSent(const QString &ownerRepoAppId, const QString &message);
@@ -164,6 +165,10 @@ public:
     // Diffs state
     QString m_diffCommitA;
     QString m_diffCommitB;
+
+    // Last proposed files and commit message for archive send after owner accepts
+    QStringList m_lastProposedFiles;
+    QString m_lastProposeCommitMessage;
 };
 
 #endif // PROJECT_WINDOW_H

@@ -15,6 +15,34 @@
 #include <QIcon>
 #include <QDir>
 #include <QComboBox>
+#include <QDialogButtonBox>
+
+class ApplyProposalDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    explicit ApplyProposalDialog(const QString &title, const QString &bodyText, QWidget *parent = nullptr)
+        : QDialog(parent)
+    {
+        setWindowTitle(title);
+        setModal(false);
+        setWindowFlags(Qt::Dialog | Qt::WindowMinimizeButtonHint | Qt::WindowStaysOnTopHint);
+        setAttribute(Qt::WA_DeleteOnClose, true);
+
+        QVBoxLayout *layout = new QVBoxLayout(this);
+        QLabel *label = new QLabel(bodyText, this);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+
+        QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        buttons->button(QDialogButtonBox::Ok)->setText("Apply and Commit");
+        buttons->button(QDialogButtonBox::Cancel)->setText("Dismiss");
+        layout->addWidget(buttons);
+
+        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    }
+};
 
 class CustomMessageBox : public QDialog
 {

@@ -146,6 +146,14 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
         }
     }
+    else if (messageType == "PROPOSAL_REVIEW_ACCEPTED")
+    {
+        // Owner responded to proposal review prompt
+        bool accepted = payload.value("acceptProposal").toBool();
+        QString repoName = payload.value("repoName").toString();
+        QString forBranch = payload.value("forBranch").toString();
+        emit proposalReviewAcceptedReceived(peerId, repoName, forBranch, accepted);
+    }
     else if (messageType == "PROPOSE_FILES_META")
     {
         QString repoName = payload.value("repoName").toString();
@@ -412,14 +420,16 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         else if (messageType == "PROPOSE_ARCHIVE_START")
         {
             in.startTransaction();
-            QString repoName, forBranch;
+            QString repoName, forBranch, format;
             qint64 totalSize;
-            in >> repoName >> forBranch >> totalSize;
+            in >> repoName >> forBranch >> totalSize >> format;
             if (!in.commitTransaction())
                 return;
-            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".zip";
+            QString suffix = (format == "tar.gz") ? ".tar.gz" : ".zip";
+            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + suffix;
             auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
             transfer->properties.insert("forBranch", forBranch);
+            transfer->properties.insert("format", format);
             transfer->properties.insert("mode", "raw");
             if (transfer->file.open(QIODevice::WriteOnly))
             {
@@ -435,14 +445,16 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         else if (messageType == "PROPOSE_ARCHIVE_START_ENC")
         {
             in.startTransaction();
-            QString repoName, forBranch;
+            QString repoName, forBranch, format;
             qint64 totalSize;
-            in >> repoName >> forBranch >> totalSize;
+            in >> repoName >> forBranch >> totalSize >> format;
             if (!in.commitTransaction())
                 return;
-            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".zip";
+            QString suffix = (format == "tar.gz") ? ".tar.gz" : ".zip";
+            QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + suffix;
             auto *transfer = new IncomingFileTransfer{IncomingFileTransfer::Receiving, repoName, tempPath, QFile(tempPath), totalSize, 0};
             transfer->properties.insert("forBranch", forBranch);
+            transfer->properties.insert("format", format);
             transfer->properties.insert("mode", "enc");
             if (transfer->file.open(QIODevice::WriteOnly))
             {
@@ -1031,12 +1043,18 @@ QList<QString> NetworkManager::getConnectedPeerIds() const
     {
         QTcpSocket *socket = it.key();
         const QString &id = it.value();
+        // Only count as connected once both sides have exchanged and accepted identity,
+        // and this is not a temporary transfer socket and not still pending user approval.
         if (m_pendingConnections.contains(socket))
-            continue; // exclude pending
+            continue; // pending accept
         if (socket->property("is_transfer_socket").toBool())
-            continue; // exclude temp
+            continue; // temp
+        if (id.isEmpty())
+            continue;
         if (id.startsWith("AwaitingID") || id.startsWith("Transfer:") || id.startsWith("ConnectingTo"))
             continue;
+        if (!m_handshakeSent.contains(socket))
+            continue; // ensure we completed our side handshake
         ids.append(id);
     }
     return ids;
@@ -1169,6 +1187,11 @@ void NetworkManager::sendChangeProposalArchive(QTcpSocket *targetPeerSocket, con
     if (!arcFile.open(QIODevice::ReadOnly))
         return;
 
+    // Determine archive format from file extension
+    QString format = "zip";
+    if (archivePath.endsWith(".tar.gz", Qt::CaseInsensitive) || archivePath.endsWith(".tgz", Qt::CaseInsensitive))
+        format = "tar.gz";
+
     // Encrypted chunked transfer
     QString peerId = m_socketToPeerUsernameMap.value(targetPeerSocket);
     if (peerId.isEmpty() || !m_peerCurve25519PublicKeys.contains(peerId))
@@ -1177,7 +1200,7 @@ void NetworkManager::sendChangeProposalArchive(QTcpSocket *targetPeerSocket, con
         QByteArray startBlock;
         QDataStream startOut(&startBlock, QIODevice::WriteOnly);
         startOut.setVersion(QDataStream::Qt_5_15);
-        startOut << QString("PROPOSE_ARCHIVE_START") << repoDisplayName << fromBranch << arcFile.size();
+        startOut << QString("PROPOSE_ARCHIVE_START") << repoDisplayName << fromBranch << arcFile.size() << format;
         targetPeerSocket->write(startBlock);
 
         char bufferRaw[65536];
@@ -1206,7 +1229,7 @@ void NetworkManager::sendChangeProposalArchive(QTcpSocket *targetPeerSocket, con
     QByteArray startBlock;
     QDataStream startOut(&startBlock, QIODevice::WriteOnly);
     startOut.setVersion(QDataStream::Qt_5_15);
-    startOut << QString("PROPOSE_ARCHIVE_START_ENC") << repoDisplayName << fromBranch << arcFile.size();
+    startOut << QString("PROPOSE_ARCHIVE_START_ENC") << repoDisplayName << fromBranch << arcFile.size() << format;
     targetPeerSocket->write(startBlock);
 
     QByteArray recipientPubKey = m_peerCurve25519PublicKeys.value(peerId);

@@ -25,6 +25,7 @@ add_executable(${PROJECT_NAME}
     dashboard_panel.cpp
     network_panel.cpp
     project_window.cpp
+    notifications_panel.cpp
     custom_dialogs.cpp
     welcome_window.cpp
     info_dot.cpp

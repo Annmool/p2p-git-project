@@ -1,3 +1,4 @@
+#include <QRandomGenerator>
 #include "project_window.h"
 #include "mainwindow.h" // Required for qobject_cast in constructor
 #include "custom_dialogs.h"
@@ -121,8 +122,7 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
     connect(m_removeCollaboratorButton, &QPushButton::clicked, this, &ProjectWindow::onRemoveCollaboratorClicked);
     connect(m_groupMembersList, &QListWidget::currentItemChanged, this, &ProjectWindow::onGroupMemberSelectionChanged);
 
-    connect(this, &ProjectWindow::fetchBundleRequested, qobject_cast<MainWindow *>(parentWidget()), &MainWindow::handleFetchBundleRequest);
-    connect(this, &ProjectWindow::proposeChangesRequested, qobject_cast<MainWindow *>(parentWidget()), &MainWindow::handleProposeChangesRequest);
+    // Parent (MainWindow) wires cross-window signals after creating this ProjectWindow to avoid duplicate connections.
 
     connect(m_refreshStatusButton, &QPushButton::clicked, this, &ProjectWindow::refreshStatus);
     connect(m_stageAllButton, &QPushButton::clicked, this, &ProjectWindow::onStageAllClicked);
@@ -130,6 +130,12 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
     connect(m_commitButton, &QPushButton::clicked, this, &ProjectWindow::onCommitClicked);
     connect(m_unstagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
     connect(m_stagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
+
+    // Collaborator: react when owner accepts review to send archive
+    if (m_networkManager)
+    {
+        connect(m_networkManager, &NetworkManager::proposalReviewAcceptedReceived, this, &ProjectWindow::handleProposalReviewAccepted);
+    }
 
     refreshStatus();
 }
@@ -640,6 +646,9 @@ void ProjectWindow::onSendProposedFilesClicked()
         CustomMessageBox::warning(this, "Cannot Propose", "You must be on a branch to propose changes.");
         return;
     }
+    // After validation, before emit:
+    m_lastProposedFiles = rels;
+    m_lastProposeCommitMessage = msg;
     emit proposeFilesRequested(m_repoInfo.ownerPeerId, m_repoInfo.displayName, QString::fromStdString(currentBranch), msg, rels);
 }
 
@@ -1127,4 +1136,49 @@ void ProjectWindow::onCommitClicked()
     {
         CustomMessageBox::critical(this, "Commit Failed", QString::fromStdString(error));
     }
+}
+
+void ProjectWindow::handleProposalReviewAccepted(const QString &ownerPeerId, const QString &repoName, const QString &forBranch, bool accepted)
+{
+    if (!accepted)
+        return;
+    if (m_repoInfo.ownerPeerId != ownerPeerId || m_repoInfo.displayName != repoName)
+        return;
+    // Send archive (zip) to owner
+    QString tempOverlay = QDir::tempPath() + "/SyncIt_propose_overlay_" + repoName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + "_" + QString::number(static_cast<qulonglong>(QRandomGenerator::global()->generate64()));
+    QDir().mkpath(tempOverlay);
+    QDir repoDir(m_repoInfo.localPath);
+    // Assume files and commitMessage are stored from last proposal
+    QStringList rels = m_lastProposedFiles;
+    QString commitMessage = m_lastProposeCommitMessage;
+    for (const QString &rel : rels)
+    {
+        QString src = repoDir.filePath(rel);
+        QString dst = QDir(tempOverlay).filePath(rel);
+        QFileInfo dfi(dst);
+        QDir().mkpath(dfi.dir().absolutePath());
+        if (QFileInfo::exists(src) && QFileInfo(src).isFile())
+            QFile::copy(src, dst);
+    }
+    QString archivePath = QDir::tempPath() + "/SyncIt_propose_" + repoName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".zip";
+    QString zipExe = QStandardPaths::findExecutable("zip");
+    bool zipped = false;
+    if (!zipExe.isEmpty())
+    {
+        QProcess zp;
+        zp.setWorkingDirectory(tempOverlay);
+        QStringList args = {"-qr", archivePath, "."};
+        zp.start(zipExe, args);
+        if (zp.waitForFinished(60000) && zp.exitCode() == 0)
+            zipped = true;
+    }
+    if (!zipped)
+    {
+        CustomMessageBox::critical(this, "Proposal Failed", "Could not create archive of proposed files.");
+        QDir(tempOverlay).removeRecursively();
+        return;
+    }
+    m_networkManager->sendChangeProposalArchive(m_networkManager->getSocketForPeer(ownerPeerId), repoName, forBranch, archivePath);
+    QDir(tempOverlay).removeRecursively();
+    QFile::remove(archivePath);
 }

@@ -398,6 +398,32 @@ ProjectWindow QListWidget {
     padding: 4px;
 }
 
+/* === Notifications Panel Styling === */
+NotificationsPanel {
+    background-color: #F8FAFC; /* slate-50 */
+}
+
+#NotificationCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0; /* slate-200 */
+    border-radius: 10px;
+}
+
+NotificationsPanel QLabel#notificationTitle {
+    color: #0F4C4A; /* Dark Teal */
+    font-weight: 600;
+    font-size: 15px;
+}
+
+NotificationsPanel QLabel#notificationMessage {
+    color: #334155; /* slate-700 */
+}
+
+NotificationsPanel QLabel#notificationMeta {
+    color: #64748B; /* slate-500 */
+    font-size: 11px;
+}
+
 ProjectWindow QListWidget::item {
     padding: 8px 12px;
     border: none;

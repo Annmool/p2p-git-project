@@ -32,6 +32,9 @@ class NetworkManager : public QObject
 {
     Q_OBJECT
 
+signals:
+    void proposalReviewAcceptedReceived(const QString &ownerPeerId, const QString &repoName, const QString &forBranch, bool accepted);
+
 public:
     explicit NetworkManager(const QString &myUsername, IdentityManager *identityManager, RepositoryManager *repoManager, QObject *parent = nullptr);
     ~NetworkManager();
