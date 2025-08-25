@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QDesktopServices>
 #include <QTimer>
+#include <cstdio>
 
 WelcomeWindow::WelcomeWindow(const QString &defaultName, QWidget *parent)
     : QDialog(parent),
@@ -34,9 +35,8 @@ WelcomeWindow::WelcomeWindow(const QString &defaultName, QWidget *parent)
     // Position close button properly after window is shown
     QTimer::singleShot(0, this, [this]()
                        {
-        if (auto closeBtn = findChild<QPushButton*>("closeButton")) {
-            closeBtn->move(width() - 50, 10);
-        } });
+        if (m_closeButton)
+            m_closeButton->move(width() - m_closeButton->width() - 10, 10); });
 }
 
 QString WelcomeWindow::getPeerName() const
@@ -50,11 +50,11 @@ void WelcomeWindow::setupUi()
     setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::WindowMinimizeButtonHint);
 
     // Add close button in top-right corner
-    QPushButton *closeButton = new QPushButton("×", this);
-    closeButton->setObjectName("closeButton");
-    closeButton->setFixedSize(40, 40);
-    closeButton->move(width() - 50, 10);
-    closeButton->setStyleSheet(
+    m_closeButton = new QPushButton("×", this);
+    m_closeButton->setObjectName("closeButton");
+    m_closeButton->setFixedSize(40, 40);
+    m_closeButton->move(width() - 50, 10);
+    m_closeButton->setStyleSheet(
         "QPushButton { "
         "background-color: #DC2626; "
         "color: white; "
@@ -69,7 +69,7 @@ void WelcomeWindow::setupUi()
         "QPushButton:pressed { "
         "background-color: #B91C1C; "
         "}");
-    connect(closeButton, &QPushButton::clicked, this, &WelcomeWindow::reject);
+    connect(m_closeButton, &QPushButton::clicked, this, &WelcomeWindow::reject);
 
     // Main layout
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
@@ -247,6 +247,15 @@ void WelcomeWindow::keyPressEvent(QKeyEvent *event)
     }
 }
 
+void WelcomeWindow::resizeEvent(QResizeEvent *event)
+{
+    if (m_closeButton)
+    {
+        m_closeButton->move(width() - m_closeButton->width() - 10, 10);
+    }
+    QDialog::resizeEvent(event);
+}
+
 // ---- New auth logic ----
 void WelcomeWindow::onRegisterClicked()
 {
@@ -265,6 +274,11 @@ void WelcomeWindow::onRegisterClicked()
         return;
     }
 
+    // Inform user before proceeding that a recovery key will be downloaded
+    CustomMessageBox::information(this, "Recovery Key Notice",
+                                  "A recovery key will be generated and you will be asked to save it now.\n"
+                                  "If you cancel or the save fails, registration will be canceled.");
+
     QString err, token, profilePath;
     if (!AuthManager::registerUser(u, p, err, token, profilePath))
     {
@@ -279,7 +293,19 @@ void WelcomeWindow::onRegisterClicked()
     QString savedPath = AuthManager::saveRecoveryTokenToFile(u, token, this);
     if (savedPath.isEmpty())
     {
-        CustomMessageBox::warning(this, "Recovery Key Not Saved", "Registration succeeded, but the recovery key was not saved. Store this token safely:\n\n" + token);
+        // Roll back registration to keep the process atomic
+        bool removed = false;
+        if (!profilePath.isEmpty())
+        {
+            // Use standard remove to avoid extra QtCore includes
+            QByteArray p = profilePath.toLocal8Bit();
+            removed = (std::remove(p.constData()) == 0);
+        }
+        QString msg = removed
+                          ? "Registration has been canceled because the recovery key was not saved. Please register again."
+                          : QString("Registration was canceled, but failed to delete the created profile file:\n%1\nPlease remove it manually.").arg(profilePath);
+        CustomMessageBox::critical(this, "Registration Canceled", msg);
+        return;
     }
     else
     {

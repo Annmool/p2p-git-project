@@ -10,6 +10,9 @@
 #include <QWidget>
 #include <QFrame>
 
+class QKeyEvent;
+class QResizeEvent;
+
 class WelcomeWindow : public QDialog
 {
     Q_OBJECT
@@ -36,6 +39,7 @@ private:
     void setupUi();
     void applyStyles();
     void keyPressEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
     // Header widgets
     QLabel *m_titleLabel;
@@ -47,6 +51,7 @@ private:
     QLineEdit *m_nameInput;
     QPushButton *m_continueButton;
     QPushButton *m_cancelButton;
+    QPushButton *m_closeButton{nullptr};
 
     // Register widgets
     QLineEdit *m_regUserEdit{nullptr};
