@@ -36,6 +36,7 @@ public:
 
 signals:
     void connectToPeerRequested(const QString &peerId);
+    void disconnectFromPeerRequested(const QString &peerId);
     void cloneRepoRequested(const QString &peerId, const QString &repoName);
     void sendBroadcastMessageRequested(const QString &message);
     void sendGroupMessageRequested(const QString &repoAppId, const QString &message);
@@ -63,6 +64,7 @@ private:
     QTreeWidget *discoveredPeersTreeWidget;
     QPushButton *connectToPeerButton;
     QPushButton *cloneRepoButton;
+    QPushButton *disconnectFromPeerButton;
     QPushButton *addCollaboratorButton;
     QListWidget *m_groupMembersList;
     QComboBox *m_groupChatSelector;

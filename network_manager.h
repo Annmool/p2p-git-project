@@ -123,6 +123,10 @@ private:
     RepositoryManager *m_repoManager_ptr;
     // Curve25519 public keys for crypto_box (derived from peers' Ed25519 keys)
     QMap<QString, QByteArray> m_peerCurve25519PublicKeys;
+    // Queue of encrypted-like messages for peers that are currently unreachable or
+    // do not yet have a known Curve25519 public key. Keyed by peerId.
+    QMap<QString, QList<QPair<QString, QVariantMap>>> m_queuedEncryptedMessages;
+    void flushQueuedEncryptedMessagesForPeer(const QString &peerId);
     QUdpSocket *m_udpSocket;
     quint16 m_udpDiscoveryPort;
     QTimer *m_broadcastTimer;

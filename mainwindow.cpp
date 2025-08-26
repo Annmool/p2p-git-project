@@ -211,6 +211,7 @@ void MainWindow::connectSignals()
     connect(m_networkPanel, &NetworkPanel::sendBroadcastMessageRequested, this, &MainWindow::handleSendBroadcastMessage);
     connect(m_networkPanel, &NetworkPanel::toggleDiscoveryRequested, this, &MainWindow::handleToggleDiscovery);
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
+    connect(m_networkPanel, &NetworkPanel::disconnectFromPeerRequested, this, &MainWindow::handleDisconnectFromPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromPanel);
 }
@@ -558,6 +559,24 @@ void MainWindow::handleConnectToPeer(const QString &peerId)
     m_networkManager->connectToTcpPeer(peerInfo.address, peerInfo.tcpPort, peerInfo.id);
 }
 
+void MainWindow::handleDisconnectFromPeer(const QString &peerId)
+{
+    if (!m_networkManager)
+        return;
+    QTcpSocket *sock = m_networkManager->getSocketForPeer(peerId);
+    if (!sock)
+    {
+        CustomMessageBox::warning(this, "Not Connected", QString("No active connection to '%1' was found.").arg(peerId));
+        return;
+    }
+    auto choice = CustomMessageBox::question(this, "Disconnect Peer", QString("Disconnect from peer '%1'?" ).arg(peerId), CustomMessageBox::Yes | CustomMessageBox::No);
+    if (choice == CustomMessageBox::Yes)
+    {
+        m_networkPanel->logMessage(QString("Disconnecting from '%1'...").arg(peerId), QColor("#A52A2A"));
+        sock->disconnectFromHost();
+    }
+}
+
 void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
 {
     if (!m_networkManager || !m_repoManager)
@@ -644,6 +663,16 @@ void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString 
             {
                 m_networkManager->sendEncryptedMessage(memberSocket, "COLLABORATOR_ADDED", payload);
                 m_networkPanel->logMessage(QString("Sent collaborator invitation for '%1' to '%2'.").arg(updatedRepoInfo.displayName, memberId), QColor("#0F4C4A"));
+            }
+            else
+            {
+                // If we don't have an active socket, try to connect using discovery info
+                DiscoveredPeerInfo info = m_networkManager->getDiscoveredPeerInfo(memberId);
+                if (!info.id.isEmpty())
+                {
+                    m_networkPanel->logMessage(QString("Attempting to connect to newly added collaborator %1...").arg(memberId), QColor("#666666"));
+                    m_networkManager->connectToTcpPeer(info.address, info.tcpPort, memberId);
+                }
             }
         }
 
