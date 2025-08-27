@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDir>
 #include <sodium.h>
 
 const qint64 PEER_TIMEOUT_MS = 15000;
@@ -249,6 +250,18 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
 
                         socket->setProperty("pending_bundle_request", QVariant());
                     }
+                    // Also handle pending proposals
+                    QVariantMap pendingProposal = socket->property("pending_proposal_request").value<QVariantMap>();
+                    if (!pendingProposal.isEmpty())
+                    {
+                        QString r = pendingProposal.value("repoName").toString();
+                        QString br = pendingProposal.value("fromBranch").toString();
+                        QString bp = pendingProposal.value("bundlePath").toString();
+                        QString msg = pendingProposal.value("message").toString();
+                        qDebug() << "Handshake complete on transfer socket. Now sending proposal for" << r << "branch" << br;
+                        sendChangeProposal(socket, r, br, bp, msg);
+                        socket->setProperty("pending_proposal_request", QVariant());
+                    }
                 }
                 // --- END OF FIX ---
             }
@@ -310,6 +323,97 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                 {
                     socket->disconnectFromHost();
                 }
+            }
+        }
+        else if (messageType == "PROPOSAL_META_ACK")
+        {
+            in.startTransaction();
+            QString repoName, forBranch, savePath;
+            in >> repoName >> forBranch >> savePath;
+            if (!in.commitTransaction())
+                return;
+            // Owner confirmed. Set target path and begin streaming (sender side uses pending map)
+            // This branch is processed by the SENDER (collaborator) when owner acknowledges on the same socket.
+            // We stored the pending proposal on this socket when we sent META.
+            QVariantMap pending = m_pendingProposalsBySocket.value(socket);
+            if (!pending.isEmpty() && pending.value("repoName").toString() == repoName)
+            {
+                // Persist owner-chosen path in case we want to hint, but actual write target is on owner side
+                startSendingProposal(socket, repoName, pending.value("fromBranch").toString(), pending.value("bundlePath").toString());
+                m_pendingProposalsBySocket.remove(socket);
+            }
+        }
+        else if (messageType == "PROPOSE_CHANGES_BUNDLE_START")
+        {
+            in.startTransaction();
+            QString repoName;
+            QString forBranch;
+            qint64 totalSize;
+            in >> repoName >> forBranch >> totalSize;
+            if (!in.commitTransaction())
+                return;
+
+            // Decide where to save: use pre-set target path if provided; else a temp bundle
+            QString peerUsername = m_socketToPeerUsernameMap.value(socket);
+            QString targetPath;
+            if (!peerUsername.isEmpty() && m_incomingProposalSavePaths.contains(peerUsername))
+            {
+                targetPath = m_incomingProposalSavePaths.value(peerUsername).value(repoName);
+            }
+            if (targetPath.isEmpty())
+            {
+                targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
+            }
+            // Ensure the parent directory exists
+            QDir parentDir = QFileInfo(targetPath).dir();
+            if (!parentDir.exists())
+                parentDir.mkpath(".");
+
+            auto *transfer = new IncomingFileTransfer;
+            transfer->state = IncomingFileTransfer::Receiving;
+            transfer->repoName = repoName;
+            transfer->tempLocalPath = targetPath;
+            transfer->file.setFileName(targetPath);
+            transfer->totalSize = totalSize;
+            transfer->bytesReceived = 0;
+            transfer->properties.insert("forBranch", forBranch);
+            transfer->properties.insert("type", QString("proposal"));
+            if (transfer->file.open(QIODevice::WriteOnly))
+            {
+                m_incomingTransfers.insert(socket, transfer);
+                // Reuse progress signals
+                emit repoBundleTransferStarted(repoName, totalSize);
+            }
+            else
+            {
+                qWarning() << "Could not open target path for proposal bundle:" << targetPath;
+                delete transfer;
+            }
+        }
+        else if (messageType == "PROPOSE_CHANGES_BUNDLE_END")
+        {
+            in.startTransaction();
+            QString repoName;
+            in >> repoName;
+            if (!in.commitTransaction())
+                return;
+
+            if (m_incomingTransfers.contains(socket))
+            {
+                IncomingFileTransfer *transfer = m_incomingTransfers.take(socket);
+                QString forBranch = transfer->properties.value("forBranch").toString();
+                transfer->file.close();
+                bool success = (transfer->bytesReceived == transfer->totalSize);
+                QString fromPeer = m_socketToPeerUsernameMap.value(socket, QString());
+                if (success)
+                {
+                    emit changeProposalReceived(fromPeer, repoName, forBranch, transfer->tempLocalPath);
+                }
+                else
+                {
+                    QFile::remove(transfer->tempLocalPath);
+                }
+                delete transfer;
             }
         }
         else if (messageType == "BROADCAST_MESSAGE")
@@ -1086,7 +1190,82 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
     }
 }
 
-void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath)
+void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
+{
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
+        return;
+    QFile bundleFile(bundlePath);
+    if (!bundleFile.open(QIODevice::ReadOnly))
+        return;
+
+    // First, send an encrypted metadata message so owner can choose a save path and explicitly acknowledge
+    QVariantMap meta;
+    meta["repoName"] = repoDisplayName;
+    meta["forBranch"] = fromBranch;
+    meta["size"] = bundleFile.size();
+    if (!proposalMessage.isEmpty())
+        meta["message"] = proposalMessage;
+    sendEncryptedMessage(targetPeerSocket, "PROPOSAL_META", meta);
+    // Queue pending proposal to start after owner's ACK arrives
+    QVariantMap pending;
+    pending["repoName"] = repoDisplayName;
+    pending["fromBranch"] = fromBranch;
+    pending["bundlePath"] = bundlePath;
+    m_pendingProposalsBySocket[targetPeerSocket] = pending;
+}
+
+DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const
+{
+    return m_discoveredPeers.value(peerId, DiscoveredPeerInfo());
+}
+
+QMap<QString, DiscoveredPeerInfo> NetworkManager::getDiscoveredPeers() const
+{
+    return m_discoveredPeers;
+}
+
+void NetworkManager::setIncomingProposalSavePath(const QString &peerId, const QString &repoDisplayName, const QString &targetFilePath)
+{
+    m_incomingProposalSavePaths[peerId][repoDisplayName] = targetFilePath;
+}
+
+void NetworkManager::sendProposalToPeer(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
+{
+    QTcpSocket *sock = getSocketForPeer(peerId);
+    if (sock && sock->state() == QAbstractSocket::ConnectedState)
+    {
+        sendChangeProposal(sock, repoDisplayName, fromBranch, bundlePath, proposalMessage);
+        return;
+    }
+
+    // Create a temporary transfer socket and queue the proposal to be sent after handshake
+    DiscoveredPeerInfo info = getDiscoveredPeerInfo(peerId);
+    if (info.id.isEmpty())
+    {
+        qWarning() << "Cannot find peer to send proposal:" << peerId;
+        return;
+    }
+    QTcpSocket *socket = new QTcpSocket(this);
+    socket->setProperty("is_transfer_socket", true);
+    QVariantMap pendingProposal;
+    pendingProposal["type"] = "proposal";
+    pendingProposal["repoName"] = repoDisplayName;
+    pendingProposal["fromBranch"] = fromBranch;
+    pendingProposal["bundlePath"] = bundlePath;
+    pendingProposal["message"] = proposalMessage;
+    socket->setProperty("pending_proposal_request", QVariant::fromValue(pendingProposal));
+
+    m_socketToPeerUsernameMap.insert(socket, info.id);
+    m_allTcpSockets.append(socket);
+    connect(socket, &QTcpSocket::connected, this, [this, socket]()
+            { sendIdentityOverTcp(socket); });
+    connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
+    connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
+    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
+    socket->connectToHost(info.address, info.tcpPort);
+}
+
+void NetworkManager::startSendingProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath)
 {
     if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
         return;
@@ -1110,7 +1289,6 @@ void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QStr
             if (!targetPeerSocket->waitForBytesWritten(-1))
             {
                 bundleFile.close();
-                QFile::remove(bundlePath);
                 return;
             }
         }
@@ -1122,14 +1300,4 @@ void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QStr
     endOut.setVersion(QDataStream::Qt_5_15);
     endOut << QString("PROPOSE_CHANGES_BUNDLE_END") << repoDisplayName;
     targetPeerSocket->write(endBlock);
-}
-
-DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const
-{
-    return m_discoveredPeers.value(peerId, DiscoveredPeerInfo());
-}
-
-QMap<QString, DiscoveredPeerInfo> NetworkManager::getDiscoveredPeers() const
-{
-    return m_discoveredPeers;
 }

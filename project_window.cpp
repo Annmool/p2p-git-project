@@ -16,6 +16,7 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QDateTime>
+#include <QTemporaryFile>
 #include "info_dot.h"
 
 // --- CommitWidget Implementation ---
@@ -108,6 +109,11 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
         CustomMessageBox::critical(this, "Error", "Could not open repository:\n" + QString::fromStdString(error));
         close();
         return;
+    }
+    // After repository is open, ensure the Propose tab branch list is populated for collaborators
+    if (!m_repoInfo.isOwner)
+    {
+        populateProposeBranches();
     }
     updateStatus();
     updateGroupMembers();
@@ -230,6 +236,179 @@ QWidget *ProjectWindow::createChangesTab()
     return changesWidget;
 }
 
+QWidget *ProjectWindow::createProposeTab()
+{
+    QWidget *proposeWidget = new QWidget();
+    QVBoxLayout *mainLayout = new QVBoxLayout(proposeWidget);
+
+    // Branch selection
+    QHBoxLayout *branchLayout = new QHBoxLayout();
+    branchLayout->addWidget(new QLabel("<b>Propose to Branch:</b>"));
+    m_targetBranchDropdown = new QComboBox(proposeWidget);
+    branchLayout->addWidget(m_targetBranchDropdown, 1);
+    mainLayout->addLayout(branchLayout);
+
+    // Proposed files list and controls
+    QHBoxLayout *fileButtonsLayout = new QHBoxLayout();
+    m_addFilesButton = new QPushButton("Add Files...", proposeWidget);
+    m_removeFilesButton = new QPushButton("Remove Selected", proposeWidget);
+    fileButtonsLayout->addWidget(m_addFilesButton);
+    fileButtonsLayout->addWidget(m_removeFilesButton);
+    fileButtonsLayout->addStretch();
+    mainLayout->addLayout(fileButtonsLayout);
+
+    m_proposedFilesList = new QListWidget(proposeWidget);
+    m_proposedFilesList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    mainLayout->addWidget(m_proposedFilesList, 1);
+
+    // Proposal message
+    mainLayout->addWidget(new QLabel("<b>Proposal Message</b>"));
+    m_proposalMessageInput = new QTextEdit(proposeWidget);
+    m_proposalMessageInput->setPlaceholderText("Describe your proposed changes for the owner...");
+    m_proposalMessageInput->setMaximumHeight(120);
+    mainLayout->addWidget(m_proposalMessageInput);
+
+    // Send button
+    m_sendProposalButton = new QPushButton("Propose Changes", proposeWidget);
+    mainLayout->addWidget(m_sendProposalButton);
+
+    // Wire actions
+    // m_addFilesButton handler below uses ExistingFiles dialog
+    connect(m_addFilesButton, &QPushButton::clicked, this, [this]()
+            {
+        // Use CustomFileDialog in ExistingFiles mode for multi-select
+        CustomFileDialog dlg(this, "Select Files to Propose", m_repoInfo.localPath);
+        dlg.setFileMode(CustomFileDialog::ExistingFiles);
+        if (dlg.exec() == QDialog::Accepted)
+        {
+            QStringList paths = dlg.selectedFiles();
+            for (const QString &p : paths)
+            {
+                QString rel = QDir(m_repoInfo.localPath).relativeFilePath(p);
+                if (rel.isEmpty() || rel.startsWith(".."))
+                    continue;
+                bool exists = false;
+                for (int i = 0; i < m_proposedFilesList->count(); ++i)
+                {
+                    if (m_proposedFilesList->item(i)->text() == rel)
+                    { exists = true; break; }
+                }
+                if (!exists)
+                    m_proposedFilesList->addItem(rel);
+            }
+        } });
+    connect(m_removeFilesButton, &QPushButton::clicked, this, [this]()
+            {
+        auto selected = m_proposedFilesList->selectedItems();
+        for (QListWidgetItem *it : selected)
+        {
+            delete it;
+        } });
+    connect(m_sendProposalButton, &QPushButton::clicked, this, [this]()
+            {
+        if (m_repoInfo.isOwner)
+        {
+            CustomMessageBox::information(this, "Not Allowed", "Owners don't propose; commit directly.");
+            return;
+        }
+        if (!m_networkManager)
+            return;
+        QTcpSocket *ownerSocket = m_networkManager->getSocketForPeer(m_repoInfo.ownerPeerId);
+        if (!ownerSocket)
+        {
+            CustomMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(m_repoInfo.ownerPeerId));
+            return;
+        }
+        QString targetBranch = m_targetBranchDropdown->currentText().trimmed();
+        if (targetBranch.isEmpty())
+        {
+            CustomMessageBox::warning(this, "Branch Required", "Please select a target branch.");
+            return;
+        }
+        if (m_proposedFilesList->count() == 0)
+        {
+            CustomMessageBox::warning(this, "No Files", "Please add one or more files to include in your proposal.");
+            return;
+        }
+
+        // Create a temporary commit with the selected files and bundle diff against owner's branch tip
+        std::string err;
+        // Save current HEAD for cleanup
+        QString headBefore;
+        {
+            QProcess p; p.setWorkingDirectory(m_repoInfo.localPath);
+            p.start("git", {"rev-parse", "HEAD"});
+            if (p.waitForFinished(10000) && p.exitCode() == 0)
+                headBefore = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        }
+
+        // Stage only selected files
+        for (int i = 0; i < m_proposedFilesList->count(); ++i)
+        {
+            std::string rel = m_proposedFilesList->item(i)->text().toStdString();
+            m_gitBackend.stagePath(rel, err);
+        }
+
+        // Create a throwaway commit on a temp branch
+        QString proposer = m_networkManager->getMyUsername();
+        QString tempBranch = QString("syncit/proposal/%1/%2").arg(proposer, QString::number(QDateTime::currentMSecsSinceEpoch()));
+        QProcess g;
+        g.setWorkingDirectory(m_repoInfo.localPath);
+        g.start("git", {"checkout", "-b", tempBranch});
+        if (!g.waitForFinished(20000) || g.exitCode() != 0)
+        {
+            CustomMessageBox::critical(this, "Error", "Could not create temporary branch for proposal.");
+            return;
+        }
+        std::string name = proposer.toStdString();
+        std::string email = name + "@syncit.p2p";
+        std::string cmErr;
+        QString message = m_proposalMessageInput->toPlainText();
+        if (!m_gitBackend.commitChanges((QString("Proposal: ") + message).toStdString(), name, email, cmErr))
+        {
+            CustomMessageBox::critical(this, "Error", QString("Failed to create proposal commit: %1").arg(QString::fromStdString(cmErr)));
+            // Try to checkout back
+            if (!headBefore.isEmpty())
+            {
+                QProcess chk; chk.setWorkingDirectory(m_repoInfo.localPath); chk.start("git", {"checkout", headBefore}); chk.waitForFinished(10000);
+            }
+            return;
+        }
+
+        // Build a diff bundle tempBranch ^ targetBranch
+        QTemporaryFile tempBundle(QDir::tempPath() + "/proposal_XXXXXX.bundle");
+        tempBundle.setAutoRemove(false);
+        if (!tempBundle.open())
+        {
+            CustomMessageBox::critical(this, "Error", "Failed to create temporary bundle file.");
+            return;
+        }
+        QString bundlePath = tempBundle.fileName();
+        tempBundle.close();
+
+        if (!m_gitBackend.createDiffBundle(bundlePath.toStdString(), tempBranch.toStdString(), targetBranch.toStdString(), cmErr))
+        {
+            QFile::remove(bundlePath);
+            CustomMessageBox::warning(this, "No Changes", QString::fromStdString(cmErr).isEmpty() ? "No differences to propose." : QString::fromStdString(cmErr));
+        }
+        else
+        {
+            // Notify owner and send bundle over TCP (work when disconnected too)
+            m_networkManager->sendProposalToPeer(m_repoInfo.ownerPeerId, m_repoInfo.displayName, targetBranch, bundlePath, message);
+            CustomMessageBox::information(this, "Proposal Sent", "Your proposed changes have been sent to the owner.");
+        }
+
+        // Cleanup: checkout back and delete temp branch
+        if (!headBefore.isEmpty())
+        {
+            QProcess chk; chk.setWorkingDirectory(m_repoInfo.localPath); chk.start("git", {"checkout", headBefore}); chk.waitForFinished(10000);
+        }
+        QProcess del; del.setWorkingDirectory(m_repoInfo.localPath); del.start("git", {"branch", "-D", tempBranch}); del.waitForFinished(10000);
+        // Unstage everything after operation
+        std::string unErr; m_gitBackend.unstageAll(unErr); });
+
+    return proposeWidget;
+}
 void ProjectWindow::setupUi()
 {
     setWindowTitle("Project: " + m_repoInfo.displayName);
@@ -242,6 +421,7 @@ void ProjectWindow::setupUi()
 
     // Create tabs
     m_changesTab = createChangesTab();
+    m_proposeTab = createProposeTab();
     m_historyTab = new QWidget();
     m_collabTab = new QWidget();
     m_diffsTab = createDiffsTab();
@@ -280,7 +460,11 @@ void ProjectWindow::setupUi()
     connect(m_branchComboBox, &QComboBox::currentTextChanged, this, &ProjectWindow::viewRemoteBranchHistory);
 
     // Add tabs to tab widget
-    m_tabWidget->addTab(m_changesTab, "Changes");
+    // Only owners see the Changes tab. Collaborators see the Propose tab.
+    if (m_repoInfo.isOwner)
+        m_tabWidget->addTab(m_changesTab, "Changes");
+    else
+        m_tabWidget->addTab(m_proposeTab, "Propose");
     m_tabWidget->addTab(m_historyTab, "History");
     m_tabWidget->addTab(m_collabTab, "Collaboration");
     m_tabWidget->addTab(m_diffsTab, "Diffs");
@@ -310,6 +494,8 @@ void ProjectWindow::setupUi()
     collabLayout->addLayout(chatInputLayout);
 
     resize(800, 600);
+
+    // Propose branches are populated after repo open in constructor
 }
 
 QWidget *ProjectWindow::createDiffsTab()
@@ -369,6 +555,27 @@ void ProjectWindow::setDiffStatus(const QString &text, const QColor &color)
     QPalette pal = m_diffStatusLabel->palette();
     pal.setColor(QPalette::WindowText, color);
     m_diffStatusLabel->setPalette(pal);
+}
+
+void ProjectWindow::populateProposeBranches()
+{
+    if (m_repoInfo.isOwner || !m_targetBranchDropdown)
+        return;
+    m_targetBranchDropdown->clear();
+    std::string err;
+    auto branches = m_gitBackend.listBranches(GitBackend::BranchType::ALL, err);
+    for (const auto &b : branches)
+    {
+        QString qs = QString::fromStdString(b);
+        if (qs.endsWith("/HEAD"))
+            continue;
+        m_targetBranchDropdown->addItem(qs);
+    }
+    // Select current branch if present
+    QString cur = QString::fromStdString(m_gitBackend.getCurrentBranch(err));
+    int idx = m_targetBranchDropdown->findText(cur);
+    if (idx >= 0)
+        m_targetBranchDropdown->setCurrentIndex(idx);
 }
 
 QString ProjectWindow::runGit(const QStringList &args, int timeoutMs, int *exitCodeOut)

@@ -54,7 +54,10 @@ public:
     void acceptPendingTcpConnection(QTcpSocket *pendingSocket);
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
-    void sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath);
+    void sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage = QString());
+    void sendProposalToPeer(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage = QString());
+    // Owner-side: set where to save an incoming proposal patch for a given peer+repo
+    void setIncomingProposalSavePath(const QString &peerId, const QString &repoDisplayName, const QString &targetFilePath);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
@@ -132,6 +135,10 @@ private:
     QTimer *m_broadcastTimer;
     QTimer *m_peerCleanupTimer;
     QMap<QString, DiscoveredPeerInfo> m_discoveredPeers;
+    // Map of peer -> (repoDisplayName -> destination file path) for proposal patch saves
+    QMap<QString, QMap<QString, QString>> m_incomingProposalSavePaths;
+    // Pending proposals keyed by the socket they were initiated on
+    QMap<QTcpSocket *, QVariantMap> m_pendingProposalsBySocket;
 
     QString getPeerDisplayString(QTcpSocket *socket);
     void processIncomingTcpData(QTcpSocket *socket);
@@ -140,6 +147,7 @@ private:
     void sendMessageToPeer(QTcpSocket *peerSocket, const QString &messageType, const QVariantList &args);
     void handleRepoRequest(QTcpSocket *socket, const QString &requestingPeer, const QString &repoName);
     void handleEncryptedPayload(const QString &peerId, const QVariantMap &payload);
+    void startSendingProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath);
 };
 
 #endif // NETWORK_MANAGER_H

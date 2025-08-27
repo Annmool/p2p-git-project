@@ -15,6 +15,35 @@
 #include <QIcon>
 #include <QDir>
 #include <QComboBox>
+#include <QCheckBox>
+
+class ProposalReviewDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    explicit ProposalReviewDialog(const QString &fromPeer,
+                                  const QString &repoName,
+                                  const QString &forBranch,
+                                  const QString &message = QString(),
+                                  QWidget *parent = nullptr);
+
+signals:
+    void acceptedProposal();
+    void rejectedProposal();
+
+private slots:
+    void onAccept();
+    void onReject();
+
+private:
+    void setupUi(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &message);
+    void applyStyles();
+
+    QLabel *m_titleLabel{nullptr};
+    QTextEdit *m_messageView{nullptr};
+    QPushButton *m_acceptBtn{nullptr};
+    QPushButton *m_rejectBtn{nullptr};
+};
 
 class CustomMessageBox : public QDialog
 {
