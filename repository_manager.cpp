@@ -22,11 +22,13 @@ RepositoryManager::RepositoryManager(const QString &storageFilePath, const QStri
     : QObject(parent), m_storageFilePath(storageFilePath), m_myPeerId(myPeerId)
 {
     loadRepositoriesFromFile();
+    loadChatFromFile();
 }
 
 RepositoryManager::~RepositoryManager()
 {
     saveRepositoriesToFile();
+    saveChatToFile();
 }
 
 bool RepositoryManager::addManagedRepository(const QString &displayName, const QString &localPath, bool isPublic, const QString &ownerPeerId, const QString &ownerRepoAppId, const QStringList &initialGroupMembers, bool isOwner)
@@ -346,5 +348,128 @@ bool RepositoryManager::saveRepositoriesToFile() const
 
     saveFile.write(QJsonDocument(json).toJson(QJsonDocument::Indented));
     saveFile.close();
+    return true;
+}
+
+// ---------------- Chat persistence (last 24h) ----------------
+static QString chatStoragePathFor(const QString &repoStoragePath)
+{
+    // Place chat file next to repo storage file with ".chat.json" suffix
+    QFileInfo fi(repoStoragePath);
+    return fi.absoluteDir().absoluteFilePath(fi.baseName() + ".chat.json");
+}
+
+void RepositoryManager::appendChatMessage(const QString &ownerRepoAppId, const QString &sender, const QString &text, const QDateTime &tsUtc)
+{
+    if (ownerRepoAppId.isEmpty() || sender.isEmpty() || text.isEmpty())
+        return;
+    ChatMessage msg{sender, text, tsUtc.isValid() ? tsUtc.toUTC() : QDateTime::currentDateTimeUtc()};
+    auto &list = m_chatByOwnerRepo[ownerRepoAppId];
+    list.append(msg);
+    pruneOldChatMessages();
+    saveChatToFile();
+}
+
+QList<ChatMessage> RepositoryManager::getRecentChatMessages(const QString &ownerRepoAppId, const QDateTime &sinceUtc) const
+{
+    QList<ChatMessage> result;
+    if (!m_chatByOwnerRepo.contains(ownerRepoAppId))
+        return result;
+    QDateTime cutoff = sinceUtc.isValid() ? sinceUtc.toUTC() : QDateTime::currentDateTimeUtc().addDays(-1);
+    for (const ChatMessage &m : m_chatByOwnerRepo.value(ownerRepoAppId))
+    {
+        if (m.timestamp.isValid() && m.timestamp >= cutoff)
+            result.append(m);
+    }
+    return result;
+}
+
+void RepositoryManager::pruneOldChatMessages()
+{
+    QDateTime cutoff = QDateTime::currentDateTimeUtc().addDays(-1);
+    for (auto it = m_chatByOwnerRepo.begin(); it != m_chatByOwnerRepo.end(); ++it)
+    {
+        QList<ChatMessage> pruned;
+        for (const ChatMessage &m : it.value())
+        {
+            if (m.timestamp.isValid() && m.timestamp >= cutoff)
+                pruned.append(m);
+        }
+        it.value() = pruned;
+    }
+}
+
+bool RepositoryManager::loadChatFromFile()
+{
+    QString path = chatStoragePathFor(m_storageFilePath);
+    QFile f(path);
+    if (!f.exists())
+        return true;
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        qWarning() << "Couldn't open chat storage file for reading:" << path << f.errorString();
+        return false;
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+    if (!doc.isObject())
+        return false;
+    m_chatByOwnerRepo.clear();
+    QJsonObject root = doc.object();
+    for (const QString &ownerRepoId : root.keys())
+    {
+        QJsonArray arr = root.value(ownerRepoId).toArray();
+        QList<ChatMessage> msgs;
+        for (const QJsonValue &v : arr)
+        {
+            QJsonObject o = v.toObject();
+            ChatMessage m;
+            m.sender = o.value("sender").toString();
+            m.text = o.value("text").toString();
+            m.timestamp = QDateTime::fromString(o.value("timestamp").toString(), Qt::ISODate);
+            if (m.timestamp.isValid())
+                m.timestamp = m.timestamp.toUTC();
+            msgs.append(m);
+        }
+        m_chatByOwnerRepo.insert(ownerRepoId, msgs);
+    }
+    pruneOldChatMessages();
+    return true;
+}
+
+bool RepositoryManager::saveChatToFile() const
+{
+    QString path = chatStoragePathFor(m_storageFilePath);
+    QDir dir = QFileInfo(path).dir();
+    if (!dir.exists())
+    {
+        if (!dir.mkpath("."))
+        {
+            qWarning() << "Could not create directory for chat storage file:" << dir.absolutePath();
+            return false;
+        }
+    }
+    QJsonObject root;
+    for (auto it = m_chatByOwnerRepo.constBegin(); it != m_chatByOwnerRepo.constEnd(); ++it)
+    {
+        QJsonArray arr;
+        for (const ChatMessage &m : it.value())
+        {
+            QJsonObject o;
+            o["sender"] = m.sender;
+            o["text"] = m.text;
+            o["timestamp"] = m.timestamp.isValid() ? m.timestamp.toUTC().toString(Qt::ISODateWithMs) : QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+            arr.append(o);
+        }
+        root[it.key()] = arr;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+    {
+        qWarning() << "Couldn't open chat storage file for writing:" << path << f.errorString();
+        return false;
+    }
+    f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    f.close();
     return true;
 }

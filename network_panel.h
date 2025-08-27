@@ -40,7 +40,6 @@ signals:
     void cloneRepoRequested(const QString &peerId, const QString &repoName);
     void sendBroadcastMessageRequested(const QString &message);
     void sendGroupMessageRequested(const QString &repoAppId, const QString &message);
-    void toggleDiscoveryRequested();
     void addCollaboratorRequested(const QString &peerId);
     void groupSelectionChanged(const QString &repoAppId);
 
@@ -57,10 +56,6 @@ private:
 
     NetworkManager *m_networkManager = nullptr;
     QString m_myUsername;
-
-    QLabel *myPeerInfoLabel;
-    QPushButton *toggleDiscoveryButton;
-    QLabel *tcpServerStatusLabel;
     QTreeWidget *discoveredPeersTreeWidget;
     QPushButton *connectToPeerButton;
     QPushButton *cloneRepoButton;

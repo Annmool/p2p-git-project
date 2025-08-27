@@ -6,7 +6,6 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QProcess>
-#include <QMessageBox>
 #include <QInputDialog>
 #include <QTimer>
 #include <QStyle>
@@ -16,6 +15,7 @@
 #include <QMenu>
 #include <QClipboard>
 #include <QApplication>
+#include <QDateTime>
 #include "info_dot.h"
 
 // --- CommitWidget Implementation ---
@@ -127,6 +127,22 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
     connect(m_commitButton, &QPushButton::clicked, this, &ProjectWindow::onCommitClicked);
     connect(m_unstagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
     connect(m_stagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
+
+    // Load last 24 hours of chat history into the display
+    if (m_repoManager && !m_repoInfo.ownerRepoAppId.isEmpty())
+    {
+        QList<ChatMessage> history = m_repoManager->getRecentChatMessages(m_repoInfo.ownerRepoAppId);
+        QString my = m_networkManager ? m_networkManager->getMyUsername() : "";
+        for (const ChatMessage &cm : history)
+        {
+            QString tsLocal = cm.timestamp.isValid() ? cm.timestamp.toLocalTime().toString("hh:mm:ss") : QDateTime::currentDateTime().toString("hh:mm:ss");
+            QString formatted = QString("[%1] <b>%2:</b> %3")
+                                    .arg(tsLocal)
+                                    .arg(cm.sender == my ? "Me" : cm.sender.toHtmlEscaped())
+                                    .arg(cm.text.toHtmlEscaped());
+            m_groupChatDisplay->append(formatted);
+        }
+    }
 
     refreshStatus();
 }
@@ -563,7 +579,10 @@ void ProjectWindow::updateGroupMembers()
 void ProjectWindow::displayGroupMessage(const QString &peerId, const QString &message)
 {
     QString myUsername = m_networkManager ? m_networkManager->getMyUsername() : "";
-    QString formattedMessage = QString("<b>%1:</b> %2")
+    // Display with timestamp
+    QString ts = QDateTime::currentDateTime().toString("hh:mm:ss");
+    QString formattedMessage = QString("[%1] <b>%2:</b> %3")
+                                   .arg(ts)
                                    .arg(peerId == myUsername ? "Me" : peerId.toHtmlEscaped())
                                    .arg(message.toHtmlEscaped());
     m_groupChatDisplay->append(formattedMessage);
@@ -577,6 +596,8 @@ void ProjectWindow::onSendGroupMessageClicked()
     emit groupMessageSent(m_repoInfo.ownerRepoAppId, message);
     m_groupChatInput->clear();
 }
+
+// Load last 24h chat history on construction end
 
 void ProjectWindow::onAddCollaboratorClicked()
 {

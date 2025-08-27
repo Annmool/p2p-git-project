@@ -327,15 +327,51 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         else if (messageType == "GROUP_CHAT_MESSAGE")
         {
             in.startTransaction();
-            QByteArray repoAppIdBa, messageBa;
-            in >> repoAppIdBa >> messageBa;
+            QByteArray repoAppIdBa;
+            in >> repoAppIdBa;
             if (!in.commitTransaction())
                 return;
+
+            // Try to read [fromPeerId, message]; fall back to [message] only for legacy sends
+            QByteArray fromPeerBa, messageBa;
+            in.startTransaction();
+            in >> fromPeerBa >> messageBa;
+            bool threeField = in.commitTransaction();
+            if (!threeField)
+            {
+                in.startTransaction();
+                in >> messageBa;
+                if (!in.commitTransaction())
+                    return;
+            }
+
             QString repoAppId = QString::fromUtf8(repoAppIdBa);
             QString message = QString::fromUtf8(messageBa);
-            QString peerUsername = m_socketToPeerUsernameMap.value(socket);
-            if (!peerUsername.isEmpty())
-                emit groupMessageReceived(peerUsername, repoAppId, message);
+            QString immediateSender = m_socketToPeerUsernameMap.value(socket);
+            QString logicalSender = threeField ? QString::fromUtf8(fromPeerBa) : immediateSender;
+            if (!logicalSender.isEmpty())
+                emit groupMessageReceived(logicalSender, repoAppId, message);
+
+            // If we're the owner for this repo, relay to other connected members (hub-and-spoke)
+            if (m_repoManager_ptr)
+            {
+                ManagedRepositoryInfo info = m_repoManager_ptr->getRepositoryInfoByOwnerAppId(repoAppId);
+                if (info.isValid() && info.isOwner)
+                {
+                    QStringList members = info.groupMembers;
+                    members.removeDuplicates();
+                    for (const QString &memberId : members)
+                    {
+                        if (memberId == logicalSender || memberId == m_myUsername)
+                            continue;
+                        QTcpSocket *memberSocket = getSocketForPeer(memberId);
+                        if (memberSocket)
+                        {
+                            sendMessageToPeer(memberSocket, "GROUP_CHAT_MESSAGE", {repoAppId, logicalSender, message});
+                        }
+                    }
+                }
+            }
         }
         else if (messageType == "ENCRYPTED_PAYLOAD")
         {
@@ -766,7 +802,8 @@ void NetworkManager::sendGroupChatMessage(const QString &repoAppId, const QStrin
         QTcpSocket *memberSocket = getSocketForPeer(memberId);
         if (memberSocket)
         {
-            sendMessageToPeer(memberSocket, "GROUP_CHAT_MESSAGE", {repoAppId, message});
+            // Include explicit sender to allow reliable fan-out and correct attribution
+            sendMessageToPeer(memberSocket, "GROUP_CHAT_MESSAGE", {repoAppId, m_myUsername, message});
         }
     }
 }
@@ -1085,8 +1122,6 @@ void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QStr
     endOut.setVersion(QDataStream::Qt_5_15);
     endOut << QString("PROPOSE_CHANGES_BUNDLE_END") << repoDisplayName;
     targetPeerSocket->write(endBlock);
-
-    // The temporary bundle file is removed by the caller after sending
 }
 
 DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const

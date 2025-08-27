@@ -13,8 +13,6 @@
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QFileDialog>
-#include <QInputDialog>
-#include <QMessageBox>
 #include <QHostInfo>
 #include <QRandomGenerator>
 #include <QProcess>
@@ -110,6 +108,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_networkPanel->setNetworkManager(m_networkManager);
     m_networkPanel->setMyPeerInfo(m_myUsername, QString::fromStdString(m_identityManager->getMyPublicKeyHex()));
+    if (m_userProfileWidget)
+    {
+        QString pkHex = QString::fromStdString(m_identityManager->getMyPublicKeyHex());
+        QString pkh = QCryptographicHash::hash(pkHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
+        m_userProfileWidget->setPublicKeyHashDisplay(pkh);
+    }
     m_networkPanel->logMessage(QString("App started as '%1'").arg(m_myUsername), QColor("#0F4C4A"));
     updateUiFromBackend();
 
@@ -162,8 +166,8 @@ void MainWindow::setupUi()
     sidebarLayout->addWidget(m_networkButton);
     sidebarLayout->addStretch();
 
-    UserProfileWidget *userProfile = new UserProfileWidget(m_myUsername, this);
-    sidebarLayout->addWidget(userProfile);
+    m_userProfileWidget = new UserProfileWidget(m_myUsername, this);
+    sidebarLayout->addWidget(m_userProfileWidget);
 
     m_mainContentWidget = new QStackedWidget(this);
 
@@ -227,7 +231,7 @@ void MainWindow::connectSignals()
     connect(m_dashboardPanel, &DashboardPanel::deleteRepoClicked, this, &MainWindow::handleDeleteRepo);
 
     connect(m_networkPanel, &NetworkPanel::sendBroadcastMessageRequested, this, &MainWindow::handleSendBroadcastMessage);
-    connect(m_networkPanel, &NetworkPanel::toggleDiscoveryRequested, this, &MainWindow::handleToggleDiscovery);
+    // Discovery toggle removed from NetworkPanel UI
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromPanel);
@@ -511,6 +515,11 @@ void MainWindow::handleProjectWindowGroupMessage(const QString &ownerRepoAppId, 
     {
         m_projectWindows[localRepoInfo.appId]->displayGroupMessage(m_myUsername, message);
     }
+    // Persist outgoing chat
+    if (m_repoManager && !ownerRepoAppId.isEmpty())
+    {
+        m_repoManager->appendChatMessage(ownerRepoAppId, m_myUsername, message);
+    }
 }
 
 void MainWindow::handleGroupMessage(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message)
@@ -526,6 +535,11 @@ void MainWindow::handleGroupMessage(const QString &senderPeerId, const QString &
         else
         {
             m_networkPanel->logGroupChatMessage(localRepoInfo.displayName, senderPeerId, message);
+        }
+        // Persist incoming chat
+        if (m_repoManager && !ownerRepoAppId.isEmpty())
+        {
+            m_repoManager->appendChatMessage(ownerRepoAppId, senderPeerId, message);
         }
     }
 }
@@ -714,18 +728,7 @@ void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
     m_networkManager->requestBundleFromPeer(peerId, repoName, fullLocalClonePath);
 }
 
-void MainWindow::handleToggleDiscovery()
-{
-    if (m_networkManager->getTcpServerPort() > 0)
-    {
-        m_networkManager->stopUdpDiscovery();
-        m_networkManager->stopTcpServer();
-    }
-    else
-    {
-        m_networkManager->startTcpServer();
-    }
-}
+// Discovery control is automatic with TCP server lifecycle in this build.
 
 void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString &peerIdToAdd)
 {
@@ -992,7 +995,7 @@ void MainWindow::handleCollaboratorRemoved(const QString &peerId, const QString 
         m_repoManager->removeManagedRepository(localAppId);
 
         QString msg = QString("You were removed from '%1' by owner %2. It has been removed from your managed list.").arg(repoDisplayName, peerId);
-        QMessageBox::information(this, "Access Revoked", msg);
+        CustomMessageBox::information(this, "Access Revoked", msg);
         m_dashboardPanel->logStatus(msg, true);
     }
 }
@@ -1059,7 +1062,7 @@ void MainWindow::handleRepoBundleSent(const QString &repoName, const QString &re
 {
     // Owner side confirmation
     m_networkPanel->logMessage(QString("Transfer of '%1' to %2 completed.").arg(repoName, recipientUsername), QColor("darkGreen"));
-    QMessageBox::information(this, "Bundle Sent", QString("Repository '%1' has been sent to %2.").arg(repoName, recipientUsername));
+    CustomMessageBox::information(this, "Bundle Sent", QString("Repository '%1' has been sent to %2.").arg(repoName, recipientUsername));
 }
 
 void MainWindow::handleRepoBundleTransferStarted(const QString &repoName, qint64 totalBytes)
@@ -1222,13 +1225,13 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
     {
         cloneSuccess = true;
         m_networkPanel->logMessage(QString("Successfully cloned '%1'.").arg(repoName), Qt::darkGreen);
-        QMessageBox::information(this, "Clone Successful", QString("Successfully cloned '%1' to:\n%2").arg(repoName, finalClonePath));
+        CustomMessageBox::information(this, "Clone Successful", QString("Successfully cloned '%1' to:\n%2").arg(repoName, finalClonePath));
     }
     else
     {
         QString errorMsg = QString(gitProcess.readAllStandardError());
         m_networkPanel->logMessage("Clone failed: " + errorMsg, Qt::red);
-        QMessageBox::critical(this, "Clone Failed", QString("Git clone command failed:\n%1").arg(errorMsg));
+        CustomMessageBox::critical(this, "Clone Failed", QString("Git clone command failed:\n%1").arg(errorMsg));
     }
 
     // Always try to add to managed repositories if clone succeeded

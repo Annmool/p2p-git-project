@@ -7,11 +7,12 @@
 #include <QJsonDocument>
 #include <QDateTime>
 #include <QRandomGenerator>
-#include <QFileDialog>
 #include <QTextStream>
 #include <QUuid>
 
 #include <sodium.h>
+
+#include "custom_dialogs.h"
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/stat.h>
@@ -344,7 +345,7 @@ QString AuthManager::saveRecoveryTokenToFile(const QString &username,
 {
     QString defaultName = QString("SyncIt_RecoveryKey_%1.key").arg(username);
     QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    QString path = QFileDialog::getSaveFileName(parent, "Save Recovery Key", QDir(dir).filePath(defaultName), "Key Files (*.key);;All Files (*)");
+    QString path = CustomFileDialog::getSaveFileName(parent, "Save Recovery Key", QDir(dir).filePath(defaultName), "Key Files (*.key);;All Files (*)");
     if (path.isEmpty())
         return QString();
 

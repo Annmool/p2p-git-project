@@ -58,12 +58,33 @@ private:
             avatar->setObjectName("userAvatarLabel");
             avatar->setAlignment(Qt::AlignCenter);
 
+            QVBoxLayout *nameLayout = new QVBoxLayout();
+            nameLayout->setContentsMargins(0, 0, 0, 0);
+            nameLayout->setSpacing(1);
+
+            m_keyHashLabel = new QLabel("", this);
+            m_keyHashLabel->setObjectName("publicKeyHashLabel");
+            m_keyHashLabel->setStyleSheet("font-family: monospace; font-size: 11px; color: #FFFFFF;");
+            m_keyHashLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
             QLabel *name = new QLabel(username, this);
             name->setObjectName("usernameLabel");
 
+            // Place key hash ABOVE the username as requested
+            nameLayout->addWidget(m_keyHashLabel);
+            nameLayout->addWidget(name);
+
             layout->addWidget(avatar);
-            layout->addWidget(name, 1);
+            layout->addLayout(nameLayout, 1);
         }
+
+        void setPublicKeyHashDisplay(const QString &hashShort)
+        {
+            m_keyHashLabel->setText(QString("PKH: %1").arg(hashShort));
+        }
+
+    private:
+        QLabel *m_keyHashLabel = nullptr;
     };
 
 private slots:
@@ -71,7 +92,6 @@ private slots:
     void handleModifyRepoAccess(const QString &appId);
     void handleDeleteRepo(const QString &appId);
     void handleOpenRepoInProjectWindow(const QString &appId);
-    void handleToggleDiscovery();
     void handleConnectToPeer(const QString &peerId);
     void handleCloneRepo(const QString &peerId, const QString &repoName);
     void handleAddCollaboratorFromPanel(const QString &peerId);
@@ -125,6 +145,7 @@ private:
     NetworkPanel *m_networkPanel;
     QStackedWidget *m_mainContentWidget;
     QWidget *m_sidebarPanel;
+    UserProfileWidget *m_userProfileWidget;
     QToolButton *m_dashboardButton;
     QToolButton *m_networkButton;
 
