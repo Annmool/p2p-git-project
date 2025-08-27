@@ -6,7 +6,6 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QProcess>
-#include <QMessageBox>
 #include <QInputDialog>
 #include <QTimer>
 #include <QStyle>
@@ -16,6 +15,7 @@
 #include <QMenu>
 #include <QClipboard>
 #include <QApplication>
+#include <QDateTime>
 #include "info_dot.h"
 
 // --- CommitWidget Implementation ---
@@ -128,10 +128,43 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
     connect(m_unstagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
     connect(m_stagedFilesList, &QListWidget::customContextMenuRequested, this, &ProjectWindow::onFileContextMenuRequested);
 
+    // Load last 24 hours of chat history into the display
+    if (m_repoManager && !m_repoInfo.ownerRepoAppId.isEmpty())
+    {
+        QList<ChatMessage> history = m_repoManager->getRecentChatMessages(m_repoInfo.ownerRepoAppId);
+        QString my = m_networkManager ? m_networkManager->getMyUsername() : "";
+        for (const ChatMessage &cm : history)
+        {
+            QString tsLocal = cm.timestamp.isValid() ? cm.timestamp.toLocalTime().toString("hh:mm:ss") : QDateTime::currentDateTime().toString("hh:mm:ss");
+            QString formatted = QString("[%1] <b>%2:</b> %3")
+                                    .arg(tsLocal)
+                                    .arg(cm.sender == my ? "Me" : cm.sender.toHtmlEscaped())
+                                    .arg(cm.text.toHtmlEscaped());
+            m_groupChatDisplay->append(formatted);
+        }
+    }
+
     refreshStatus();
 }
 
 ProjectWindow::~ProjectWindow() {}
+
+void ProjectWindow::showDiffForRange(const QString &commitA, const QString &commitB)
+{
+    m_commitAInput->setText(commitA);
+    m_commitBInput->setText(commitB);
+    onComputeDiffClicked();
+    focusDiffsTab();
+}
+
+void ProjectWindow::focusDiffsTab()
+{
+    int idx = m_tabWidget->indexOf(m_diffsTab);
+    if (idx >= 0)
+    {
+        m_tabWidget->setCurrentIndex(idx);
+    }
+}
 
 QWidget *ProjectWindow::createChangesTab()
 {
@@ -230,6 +263,9 @@ void ProjectWindow::setupUi()
     m_proposeChangesButton->setObjectName("proposeChangesButton");
     m_branchComboBox = new QComboBox(this);
     m_checkoutButton = new QPushButton("Checkout Branch", this);
+    // Hide Fetch and Propose Changes buttons in History tab per requirement
+    m_fetchButton->setVisible(false);
+    m_proposeChangesButton->setVisible(false);
     controlsLayout->addWidget(m_fetchButton);
     controlsLayout->addWidget(m_proposeChangesButton);
     controlsLayout->addStretch();
@@ -543,7 +579,10 @@ void ProjectWindow::updateGroupMembers()
 void ProjectWindow::displayGroupMessage(const QString &peerId, const QString &message)
 {
     QString myUsername = m_networkManager ? m_networkManager->getMyUsername() : "";
-    QString formattedMessage = QString("<b>%1:</b> %2")
+    // Display with timestamp
+    QString ts = QDateTime::currentDateTime().toString("hh:mm:ss");
+    QString formattedMessage = QString("[%1] <b>%2:</b> %3")
+                                   .arg(ts)
                                    .arg(peerId == myUsername ? "Me" : peerId.toHtmlEscaped())
                                    .arg(message.toHtmlEscaped());
     m_groupChatDisplay->append(formattedMessage);
@@ -557,6 +596,8 @@ void ProjectWindow::onSendGroupMessageClicked()
     emit groupMessageSent(m_repoInfo.ownerRepoAppId, message);
     m_groupChatInput->clear();
 }
+
+// Load last 24h chat history on construction end
 
 void ProjectWindow::onAddCollaboratorClicked()
 {

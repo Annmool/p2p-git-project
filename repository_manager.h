@@ -8,6 +8,15 @@
 #include <QUuid>
 #include <QMetaType>
 #include <QStringList>
+#include <QDateTime>
+
+struct ChatMessage
+{
+    QString sender;
+    QString text;
+    QDateTime timestamp; // UTC
+};
+Q_DECLARE_METATYPE(ChatMessage)
 
 // Defines all the data for a repository you are tracking.
 struct ManagedRepositoryInfo
@@ -24,7 +33,8 @@ struct ManagedRepositoryInfo
     ManagedRepositoryInfo() : isPublic(false), isOwner(false) {}
     bool isValid() const { return !appId.isEmpty() && !localPath.isEmpty() && !ownerPeerId.isEmpty(); }
 
-    bool operator==(const ManagedRepositoryInfo &other) const {
+    bool operator==(const ManagedRepositoryInfo &other) const
+    {
         return appId == other.appId;
     }
 };
@@ -49,11 +59,17 @@ public:
     ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
     ManagedRepositoryInfo getRepositoryInfoByDisplayName(const QString &displayName) const;
     ManagedRepositoryInfo getCloneInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const;
+    ManagedRepositoryInfo getRepositoryInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const;
     ManagedRepositoryInfo getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const;
 
     QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf() const;
     QList<ManagedRepositoryInfo> getMyPubliclyShareableRepos() const;
     QList<ManagedRepositoryInfo> getAllManagedRepositories() const;
+
+    // Chat persistence (last 24 hours)
+    void appendChatMessage(const QString &ownerRepoAppId, const QString &sender, const QString &text, const QDateTime &tsUtc = QDateTime::currentDateTimeUtc());
+    QList<ChatMessage> getRecentChatMessages(const QString &ownerRepoAppId, const QDateTime &sinceUtc = QDateTime::currentDateTimeUtc().addDays(-1)) const;
+    void pruneOldChatMessages();
 
 signals:
     void managedRepositoryListChanged();
@@ -61,10 +77,14 @@ signals:
 private:
     bool loadRepositoriesFromFile();
     bool saveRepositoriesToFile() const;
+    bool loadChatFromFile();
+    bool saveChatToFile() const;
 
     QString m_storageFilePath;
     QMap<QString, ManagedRepositoryInfo> m_managedRepositories;
     QString m_myPeerId;
+    // ownerRepoAppId -> chat messages
+    QMap<QString, QList<ChatMessage>> m_chatByOwnerRepo;
 };
 
 #endif // REPOSITORY_MANAGER_H

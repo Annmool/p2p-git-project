@@ -43,6 +43,9 @@ public:
     QString getAppId() const { return m_appId; }
     void updateGroupMembers();
     void updateStatus();
+    // Show diffs between two commits and bring the Diffs tab to front
+    void showDiffForRange(const QString &commitA, const QString &commitB);
+    void focusDiffsTab();
 
     void handleFetchBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
 
