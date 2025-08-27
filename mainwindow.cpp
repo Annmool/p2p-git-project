@@ -26,6 +26,9 @@
 #include <QSvgRenderer>
 #include <QPainter>
 #include <QTemporaryFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QDebug>
 
 // Helper function to tint SVG icons
 QIcon createTintedIcon(const QString &resourcePath, const QColor &color)
@@ -115,6 +118,13 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow() {}
 
+void MainWindow::notify(const QString &title, const QString &message)
+{
+    if (m_networkPanel)
+        m_networkPanel->logMessage(QString("%1: %2").arg(title, message), QColor("#0F4C4A"));
+    CustomMessageBox::information(this, title, message);
+}
+
 void MainWindow::setupUi()
 {
     setWindowTitle("SyncIt - " + m_myUsername);
@@ -161,6 +171,14 @@ void MainWindow::setupUi()
     m_dashboardPanel->setWelcomeMessage(m_myUsername);
 
     m_networkPanel = new NetworkPanel(this);
+    // Make the Network tab background white without affecting child buttons
+    if (m_networkPanel)
+    {
+        QPalette pal = m_networkPanel->palette();
+        pal.setColor(QPalette::Window, Qt::white);
+        m_networkPanel->setAutoFillBackground(true);
+        m_networkPanel->setPalette(pal);
+    }
 
     m_mainContentWidget->addWidget(m_dashboardPanel);
     m_mainContentWidget->addWidget(m_networkPanel);
@@ -199,7 +217,7 @@ void MainWindow::connectSignals()
         connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
         connect(m_networkManager, &NetworkManager::collaboratorAddedReceived, this, &MainWindow::handleCollaboratorAdded);
         connect(m_networkManager, &NetworkManager::collaboratorRemovedReceived, this, &MainWindow::handleCollaboratorRemoved);
-        connect(m_networkManager, &NetworkManager::changeProposalReceived, this, &MainWindow::handleIncomingChangeProposal);
+        // Proposal/notifications features are disabled in this build
     }
 
     connect(m_dashboardPanel, &DashboardPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
@@ -211,10 +229,16 @@ void MainWindow::connectSignals()
     connect(m_networkPanel, &NetworkPanel::sendBroadcastMessageRequested, this, &MainWindow::handleSendBroadcastMessage);
     connect(m_networkPanel, &NetworkPanel::toggleDiscoveryRequested, this, &MainWindow::handleToggleDiscovery);
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
-    connect(m_networkPanel, &NetworkPanel::disconnectFromPeerRequested, this, &MainWindow::handleDisconnectFromPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromPanel);
+
+    // No notifications button in this build
+
+    // Network signals for proposal meta/archive handling
+    // Proposal files meta/archive not supported in this build
 }
+
+// Legacy proposal/notifications handlers removed in this build.
 
 void MainWindow::onNavigationClicked(bool checked)
 {
@@ -232,13 +256,9 @@ void MainWindow::onNavigationClicked(bool checked)
     m_networkButton->setIcon(createTintedIcon(":/icons/message-square.svg", m_networkButton->isChecked() ? Qt::white : QColor("#E2E8F0")));
 
     if (m_dashboardButton->isChecked())
-    {
         m_mainContentWidget->setCurrentWidget(m_dashboardPanel);
-    }
     else if (m_networkButton->isChecked())
-    {
         m_mainContentWidget->setCurrentWidget(m_networkPanel);
-    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -341,12 +361,15 @@ void MainWindow::handleProposeChangesRequest(const QString &ownerPeerId, const Q
     }
 }
 
+// Legacy propose-files meta/archive handlers removed in this build.
+
 void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath)
 {
-    CustomMessageBox::StandardButton ret = CustomMessageBox::question(this, "Change Proposal Received",
-                                                                      QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nDo you want to review and merge these changes?").arg(fromPeer, repoName, forBranch),
-                                                                      CustomMessageBox::Yes | CustomMessageBox::No);
-
+    CustomMessageBox::StandardButton ret = CustomMessageBox::question(
+        this,
+        "Change Proposal Received",
+        QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nOpen Diffs to review?").arg(fromPeer, repoName, forBranch),
+        CustomMessageBox::Yes | CustomMessageBox::No);
     if (ret == CustomMessageBox::No)
     {
         QFile::remove(bundlePath);
@@ -370,29 +393,112 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
         return;
     }
 
+    // Open repo and prepare a preview worktree at current HEAD to simulate merge for diff preview
     GitBackend backend;
     std::string error;
     if (!backend.openRepository(repoInfo.localPath.toStdString(), error))
     {
-        CustomMessageBox::critical(this, "Error", "Could not open local repository to apply changes.");
+        CustomMessageBox::critical(this, "Error", "Could not open local repository to preview changes.");
         QFile::remove(bundlePath);
         return;
     }
 
-    if (backend.applyBundle(bundlePath.toStdString(), error))
+    // Capture prev HEAD sha
+    QString prevHeadSha;
     {
-        CustomMessageBox::information(this, "Changes Merged", "The proposed changes have been successfully merged.");
-        if (m_projectWindows.contains(repoInfo.appId))
-        {
-            m_projectWindows[repoInfo.appId]->updateStatus();
-        }
-    }
-    else
-    {
-        CustomMessageBox::critical(this, "Merge Failed", QString("Could not automatically merge changes. Please check the repository for conflicts.\n\nDetails: %1").arg(QString::fromStdString(error)));
+        QProcess p;
+        p.setWorkingDirectory(repoInfo.localPath);
+        p.start("git", {"rev-parse", "HEAD"});
+        if (p.waitForFinished(10000) && p.exitCode() == 0)
+            prevHeadSha = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
     }
 
+    // Create a detached worktree at prev HEAD
+    QString wtPath = QDir::tempPath() + "/SyncIt_wt_" + repoName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + "_" + QString::number(static_cast<qulonglong>(QRandomGenerator::global()->generate64()));
+    QDir().mkpath(wtPath);
+    QString gitExe = QStandardPaths::findExecutable("git");
+    bool previewReady = false;
+    QString previewSha;
+    if (!gitExe.isEmpty() && !prevHeadSha.isEmpty())
+    {
+        QProcess addWt;
+        addWt.setWorkingDirectory(repoInfo.localPath);
+        addWt.start(gitExe, {"worktree", "add", "--detach", wtPath, prevHeadSha});
+        if (addWt.waitForFinished(600000) && addWt.exitCode() == 0)
+        {
+            // Apply bundle in the worktree only
+            GitBackend wtBackend;
+            if (wtBackend.openRepository(wtPath.toStdString(), error))
+            {
+                if (wtBackend.applyBundle(bundlePath.toStdString(), error))
+                {
+                    QProcess rev;
+                    rev.setWorkingDirectory(wtPath);
+                    rev.start(gitExe, {"rev-parse", "HEAD"});
+                    if (rev.waitForFinished(10000) && rev.exitCode() == 0)
+                    {
+                        previewSha = QString::fromUtf8(rev.readAllStandardOutput()).trimmed();
+                        previewReady = !previewSha.isEmpty();
+                    }
+                }
+            }
+        }
+    }
+
+    // Show diffs and a minimizable dialog for applying
+    if (previewReady && m_projectWindows.contains(repoInfo.appId) && m_projectWindows[repoInfo.appId])
+    {
+        ProjectWindow *pw = m_projectWindows[repoInfo.appId];
+        pw->updateStatus();
+        pw->showDiffForRange(prevHeadSha, previewSha);
+    }
+
+    // Ask whether to apply now; if yes, apply bundle into main repo and clean up preview
+    auto decision = CustomMessageBox::question(this,
+                                               "Apply Proposed Changes",
+                                               QString("Review diffs for '%1' on branch '%2' are ready.\nDo you want to apply and commit these changes now?").arg(repoName, forBranch),
+                                               CustomMessageBox::Yes | CustomMessageBox::No);
+    if (decision == CustomMessageBox::Yes)
+    {
+        GitBackend mainBackend;
+        std::string err;
+        if (!mainBackend.openRepository(repoInfo.localPath.toStdString(), err))
+        {
+            CustomMessageBox::critical(this, "Error", "Could not open repository to apply changes.");
+        }
+        else if (mainBackend.applyBundle(bundlePath.toStdString(), err))
+        {
+            QString newHeadSha;
+            QProcess p;
+            p.setWorkingDirectory(repoInfo.localPath);
+            p.start("git", {"rev-parse", "HEAD"});
+            if (p.waitForFinished(10000) && p.exitCode() == 0)
+                newHeadSha = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+            CustomMessageBox::information(this, "Changes Committed", "The proposed changes have been applied as a commit.");
+            if (m_projectWindows.contains(repoInfo.appId) && m_projectWindows[repoInfo.appId])
+            {
+                auto pw = m_projectWindows[repoInfo.appId];
+                pw->updateStatus();
+                if (!prevHeadSha.isEmpty() && !newHeadSha.isEmpty())
+                    pw->showDiffForRange(prevHeadSha, newHeadSha);
+            }
+        }
+        else
+        {
+            CustomMessageBox::critical(this, "Apply Failed", QString::fromStdString(err));
+        }
+    }
+    // Clean up preview worktree and bundle either way
+    if (!gitExe.isEmpty())
+    {
+        QProcess rm;
+        rm.setWorkingDirectory(repoInfo.localPath);
+        rm.start(gitExe, {"worktree", "remove", "--force", wtPath});
+        rm.waitForFinished(600000);
+    }
     QFile::remove(bundlePath);
+    QDir(wtPath).removeRecursively();
+    return;
 }
 
 // ... All other handler functions are the same as the last complete version you provided ...
@@ -422,6 +528,13 @@ void MainWindow::handleGroupMessage(const QString &senderPeerId, const QString &
             m_networkPanel->logGroupChatMessage(localRepoInfo.displayName, senderPeerId, message);
         }
     }
+}
+
+void MainWindow::handleDisconnectFromPeer(const QString &peerId)
+{
+    Q_UNUSED(peerId);
+    // Refresh UI to reflect disconnected peer states
+    updateUiFromBackend();
 }
 
 void MainWindow::handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg)
@@ -559,24 +672,6 @@ void MainWindow::handleConnectToPeer(const QString &peerId)
     m_networkManager->connectToTcpPeer(peerInfo.address, peerInfo.tcpPort, peerInfo.id);
 }
 
-void MainWindow::handleDisconnectFromPeer(const QString &peerId)
-{
-    if (!m_networkManager)
-        return;
-    QTcpSocket *sock = m_networkManager->getSocketForPeer(peerId);
-    if (!sock)
-    {
-        CustomMessageBox::warning(this, "Not Connected", QString("No active connection to '%1' was found.").arg(peerId));
-        return;
-    }
-    auto choice = CustomMessageBox::question(this, "Disconnect Peer", QString("Disconnect from peer '%1'?" ).arg(peerId), CustomMessageBox::Yes | CustomMessageBox::No);
-    if (choice == CustomMessageBox::Yes)
-    {
-        m_networkPanel->logMessage(QString("Disconnecting from '%1'...").arg(peerId), QColor("#A52A2A"));
-        sock->disconnectFromHost();
-    }
-}
-
 void MainWindow::handleCloneRepo(const QString &peerId, const QString &repoName)
 {
     if (!m_networkManager || !m_repoManager)
@@ -663,16 +758,6 @@ void MainWindow::addCollaboratorToRepo(const QString &localAppId, const QString 
             {
                 m_networkManager->sendEncryptedMessage(memberSocket, "COLLABORATOR_ADDED", payload);
                 m_networkPanel->logMessage(QString("Sent collaborator invitation for '%1' to '%2'.").arg(updatedRepoInfo.displayName, memberId), QColor("#0F4C4A"));
-            }
-            else
-            {
-                // If we don't have an active socket, try to connect using discovery info
-                DiscoveredPeerInfo info = m_networkManager->getDiscoveredPeerInfo(memberId);
-                if (!info.id.isEmpty())
-                {
-                    m_networkPanel->logMessage(QString("Attempting to connect to newly added collaborator %1...").arg(memberId), QColor("#666666"));
-                    m_networkManager->connectToTcpPeer(info.address, info.tcpPort, memberId);
-                }
             }
         }
 
@@ -811,16 +896,55 @@ void MainWindow::handleRemoveCollaboratorFromProjectWindow(const QString &appId,
 
 void MainWindow::handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload)
 {
-    // Ignore legacy auto-add notification; we add only after successful clone
     if (messageType == "ADD_MANAGED_REPO")
     {
-        Q_UNUSED(peerId);
-        Q_UNUSED(payload);
-        m_networkPanel->logMessage("Received legacy ADD_MANAGED_REPO notification — ignoring (repo is added after clone).", QColor("#888888"));
+        // Owner notified us after they sent a bundle; ensure our local repo entry has a stable ownerRepoAppId
+        QString repoDisplayName = payload.value("repoDisplayName").toString();
+        QString ownerRepoAppId = payload.value("ownerRepoAppId").toString();
+        QStringList members = payload.value("groupMembers").toStringList();
+        if (!repoDisplayName.isEmpty() && !ownerRepoAppId.isEmpty())
+        {
+            // Find the recently-added clone by owner peer and display name
+            ManagedRepositoryInfo clone = m_repoManager->getRepositoryInfoByOwnerAndDisplayName(peerId, repoDisplayName);
+            if (clone.isValid() && !clone.isOwner)
+            {
+                m_repoManager->updateGroupMembersAndOwnerAppId(clone.appId, ownerRepoAppId, members.isEmpty() ? clone.groupMembers : members);
+                m_networkPanel->logMessage(QString("Set ownerRepoAppId for '%1' to %2; group chat channel is now stable.").arg(repoDisplayName, ownerRepoAppId), QColor("#2c7a7b"));
+                updateUiFromBackend();
+            }
+        }
         return;
     }
 
     qDebug() << "Received generic secure message of type" << messageType << "from" << peerId;
+    if (messageType == "PROPOSAL_REVIEW_DECISION")
+    {
+        QString repo = payload.value("repoName").toString();
+        QString branch = payload.value("forBranch").toString();
+        bool accepted = payload.value("accepted").toBool();
+        QString stage = payload.value("stage").toString();
+        QString title = accepted ? "Proposal Accepted" : "Proposal Dismissed";
+        QString msg = accepted ? QString("Owner accepted your proposal for '%1' on %2 (%3).").arg(repo, branch, stage)
+                               : QString("Owner dismissed your proposal for '%1' on %2 (%3).").arg(repo, branch, stage);
+        notify(title, msg);
+        return;
+    }
+    if (messageType == "PROPOSAL_APPLY_RESULT")
+    {
+        QString repo = payload.value("repoName").toString();
+        QString branch = payload.value("forBranch").toString();
+        bool applied = payload.value("applied").toBool();
+        QString title = applied ? "Proposal Applied" : "Proposal Apply Failed";
+        QString msg = applied ? QString("Owner applied your proposed changes to '%1' on %2.").arg(repo, branch)
+                              : QString("Owner failed to apply your proposed changes to '%1' on %2.").arg(repo, branch);
+        notify(title, msg);
+        // If applied, automatically pull the updated repo from the owner via a temporary socket
+        if (applied)
+        {
+            m_networkManager->requestBundleFromPeer(peerId, repo, "");
+        }
+        return;
+    }
 }
 
 void MainWindow::handleCollaboratorAdded(const QString &peerId, const QString &ownerRepoAppId, const QString &repoDisplayName, const QString &ownerPeerId, const QStringList &groupMembers)
@@ -1057,23 +1181,12 @@ void MainWindow::handleRepoBundleProgress(const QString &repoName, qint64 bytesR
 
 void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message)
 {
-    // Close progress dialog regardless of success/failure
-    if (m_transferProgressDialog)
+    // Close progress dialog when transfer succeeds, per requirement
+    if (success && m_transferProgressDialog)
     {
-        if (success)
-        {
-            m_transferProgressDialog->setValue(100);
-            m_transferProgressDialog->setLabelText(QString("Download completed: %1\nProcessing repository...").arg(repoName));
-        }
-
-        // Clean up after a short delay to let user see completion
-        QTimer::singleShot(1000, this, [this]()
-                           {
-            if (m_transferProgressDialog) {
-                m_transferProgressDialog->hide();
-                m_transferProgressDialog->deleteLater();
-                m_transferProgressDialog = nullptr;
-            } });
+        m_transferProgressDialog->hide();
+        m_transferProgressDialog->deleteLater();
+        m_transferProgressDialog = nullptr;
     }
 
     // Clean up progress tracking

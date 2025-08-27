@@ -24,7 +24,8 @@ struct ManagedRepositoryInfo
     ManagedRepositoryInfo() : isPublic(false), isOwner(false) {}
     bool isValid() const { return !appId.isEmpty() && !localPath.isEmpty() && !ownerPeerId.isEmpty(); }
 
-    bool operator==(const ManagedRepositoryInfo &other) const {
+    bool operator==(const ManagedRepositoryInfo &other) const
+    {
         return appId == other.appId;
     }
 };
@@ -49,6 +50,7 @@ public:
     ManagedRepositoryInfo getRepositoryInfoByPath(const QString &localPath) const;
     ManagedRepositoryInfo getRepositoryInfoByDisplayName(const QString &displayName) const;
     ManagedRepositoryInfo getCloneInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const;
+    ManagedRepositoryInfo getRepositoryInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const;
     ManagedRepositoryInfo getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const;
 
     QList<ManagedRepositoryInfo> getRepositoriesIAmMemberOf() const;

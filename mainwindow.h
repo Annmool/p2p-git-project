@@ -33,6 +33,7 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+    void notify(const QString &title, const QString &message);
 
 public slots:
     void handleFetchBundleRequest(const QString &ownerPeerId, const QString &repoDisplayName);

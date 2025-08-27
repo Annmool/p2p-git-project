@@ -201,6 +201,18 @@ ManagedRepositoryInfo RepositoryManager::getCloneInfoByOwnerAndDisplayName(const
     return ManagedRepositoryInfo();
 }
 
+ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOwnerAndDisplayName(const QString &ownerPeerId, const QString &displayName) const
+{
+    for (const auto &repoInfo : qAsConst(m_managedRepositories))
+    {
+        if (repoInfo.ownerPeerId == ownerPeerId && repoInfo.displayName == displayName)
+        {
+            return repoInfo;
+        }
+    }
+    return ManagedRepositoryInfo();
+}
+
 ManagedRepositoryInfo RepositoryManager::getRepositoryInfoByOwnerAppId(const QString &ownerRepoAppId) const
 {
     for (const auto &repoInfo : qAsConst(m_managedRepositories))

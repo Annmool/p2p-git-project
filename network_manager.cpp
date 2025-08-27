@@ -217,7 +217,8 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                     qWarning() << "Unexpected peer public key size for" << peerUsername << ":" << edPk.size();
                 }
 
-                if (!m_handshakeSent.contains(socket))
+                // Only respond with our identity after the user has accepted this incoming connection.
+                if (!m_handshakeSent.contains(socket) && !m_pendingConnections.contains(socket))
                 {
                     sendIdentityOverTcp(socket);
                 }
@@ -485,7 +486,39 @@ QString NetworkManager::getPeerDisplayString(QTcpSocket *socket)
 
 QTcpSocket *NetworkManager::getSocketForPeer(const QString &peerUsername)
 {
-    return m_socketToPeerUsernameMap.key(peerUsername, nullptr);
+    // Prefer a primary (non-transfer, non-pending) socket for this peer
+    QTcpSocket *fallback = nullptr;
+    for (auto it = m_socketToPeerUsernameMap.constBegin(); it != m_socketToPeerUsernameMap.constEnd(); ++it)
+    {
+        QTcpSocket *sock = it.key();
+        const QString &id = it.value();
+        if (id != peerUsername)
+            continue;
+        if (sock->property("is_transfer_socket").toBool())
+        {
+            // Remember as a last resort, but prefer non-transfer below
+            if (!fallback)
+                fallback = sock;
+            continue;
+        }
+        if (m_pendingConnections.contains(sock))
+        {
+            // Skip sockets still pending user acceptance
+            if (!fallback)
+                fallback = sock;
+            continue;
+        }
+        if (id.startsWith("AwaitingID") || id.startsWith("ConnectingTo") || id.startsWith("Transfer:"))
+        {
+            if (!fallback)
+                fallback = sock;
+            continue;
+        }
+        // This is an established primary socket for the peer
+        return sock;
+    }
+    // Fallback to any socket mapped to this peer if no ideal candidate was found
+    return fallback;
 }
 
 void NetworkManager::sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath)
@@ -669,7 +702,11 @@ void NetworkManager::sendMessageToPeer(QTcpSocket *peerSocket, const QString &me
 
     QString peerUsername = m_socketToPeerUsernameMap.value(peerSocket, "");
     // Don't send on sockets that are pending acceptance or special-purpose
-    if (m_pendingConnections.contains(peerSocket) || peerUsername.startsWith("AwaitingID") || peerUsername.startsWith("ConnectingTo") || peerUsername.startsWith("Transfer:"))
+    if (peerSocket->property("is_transfer_socket").toBool() ||
+        m_pendingConnections.contains(peerSocket) ||
+        peerUsername.startsWith("AwaitingID") ||
+        peerUsername.startsWith("ConnectingTo") ||
+        peerUsername.startsWith("Transfer:"))
         return;
 
     QByteArray block;
@@ -812,7 +849,17 @@ void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QStr
     payload["repoDisplayName"] = repoDisplayName;
     payload["senderPeerId"] = m_myUsername;
     payload["localPathHint"] = ""; // receiver can choose location
-    sendMessageToPeer(targetPeerSocket, "ADD_MANAGED_REPO", {QVariant::fromValue(payload)});
+    // Include canonical chat channel id and current members so collaborators can chat
+    if (m_repoManager_ptr)
+    {
+        ManagedRepositoryInfo ownerRepoInfo = m_repoManager_ptr->getRepositoryInfoByDisplayName(repoDisplayName);
+        if (ownerRepoInfo.isValid() && ownerRepoInfo.isOwner)
+        {
+            payload["ownerRepoAppId"] = ownerRepoInfo.appId;
+            payload["groupMembers"] = ownerRepoInfo.groupMembers;
+        }
+    }
+    sendEncryptedMessage(targetPeerSocket, "ADD_MANAGED_REPO", payload);
     QFile::remove(bundleFilePath);
 }
 
@@ -980,11 +1027,15 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
     }
     if (canAccess)
     {
-        // Mark this inbound connection as a temporary transfer socket. It will be closed after sending.
-        socket->setProperty("is_transfer_socket", true);
-        // Cancel pending timer if any to auto-allow transfer
+        // If this request arrived on a brand-new inbound socket that's still pending acceptance,
+        // treat it as a temporary transfer socket (auto-allow and close after sending).
+        // If it arrived on an already accepted primary connection, DO NOT flip it to transfer,
+        // otherwise the UI will consider the peer disconnected and chat will break.
         if (m_pendingConnections.contains(socket))
         {
+            // Mark as transfer only for pending, ad-hoc sockets
+            socket->setProperty("is_transfer_socket", true);
+            // Cancel pending timer to auto-allow this transfer connection
             QTimer *t = m_pendingConnections.take(socket);
             if (t)
                 t->deleteLater();

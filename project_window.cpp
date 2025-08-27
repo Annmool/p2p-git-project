@@ -133,6 +133,23 @@ ProjectWindow::ProjectWindow(const QString &appId, RepositoryManager *repoManage
 
 ProjectWindow::~ProjectWindow() {}
 
+void ProjectWindow::showDiffForRange(const QString &commitA, const QString &commitB)
+{
+    m_commitAInput->setText(commitA);
+    m_commitBInput->setText(commitB);
+    onComputeDiffClicked();
+    focusDiffsTab();
+}
+
+void ProjectWindow::focusDiffsTab()
+{
+    int idx = m_tabWidget->indexOf(m_diffsTab);
+    if (idx >= 0)
+    {
+        m_tabWidget->setCurrentIndex(idx);
+    }
+}
+
 QWidget *ProjectWindow::createChangesTab()
 {
     QWidget *changesWidget = new QWidget();
@@ -230,6 +247,9 @@ void ProjectWindow::setupUi()
     m_proposeChangesButton->setObjectName("proposeChangesButton");
     m_branchComboBox = new QComboBox(this);
     m_checkoutButton = new QPushButton("Checkout Branch", this);
+    // Hide Fetch and Propose Changes buttons in History tab per requirement
+    m_fetchButton->setVisible(false);
+    m_proposeChangesButton->setVisible(false);
     controlsLayout->addWidget(m_fetchButton);
     controlsLayout->addWidget(m_proposeChangesButton);
     controlsLayout->addStretch();
