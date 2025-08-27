@@ -20,8 +20,9 @@
 NetworkPanel::NetworkPanel(QWidget *parent) : QWidget(parent)
 {
     setupUi();
-    m_peerDisconnectedIcon = this->style()->standardIcon(QStyle::SP_DialogCancelButton);
-    m_peerConnectedIcon = this->style()->standardIcon(QStyle::SP_DialogYesButton);
+    // Use colored icons for clear status: green tick for connected, red cross for disconnected
+    m_peerConnectedIcon = QIcon(":/icons/check-circle-green.svg");
+    m_peerDisconnectedIcon = QIcon(":/icons/x-circle-red.svg");
 
     connect(connectToPeerButton, &QPushButton::clicked, this, &NetworkPanel::onConnectClicked);
     connect(cloneRepoButton, &QPushButton::clicked, this, &NetworkPanel::onCloneClicked);
@@ -95,9 +96,10 @@ void NetworkPanel::updatePeerList(const QMap<QString, DiscoveredPeerInfo> &disco
         QTreeWidgetItem *peerItem = new QTreeWidgetItem(discoveredPeersTreeWidget);
         peerItem->setText(0, peerInfo.id);
 
-        bool isConnected = connectedPeerIds.contains(peerInfo.id);
-        peerItem->setIcon(0, isConnected ? m_peerConnectedIcon : m_peerDisconnectedIcon);
-        peerItem->setForeground(0, isConnected ? QBrush(QColor("lime")) : QBrush(palette().color(QPalette::Text)));
+    bool isConnected = connectedPeerIds.contains(peerInfo.id);
+    peerItem->setIcon(0, isConnected ? m_peerConnectedIcon : m_peerDisconnectedIcon);
+    // Keep the peer name color default; convey status with the icon color only
+    peerItem->setForeground(0, QBrush(palette().color(QPalette::Text)));
 
         QString pkHashStr = QCryptographicHash::hash(peerInfo.publicKeyHex.toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
         peerItem->setText(1, QString("(%1) [PKH:%2]").arg(peerInfo.address.toString(), pkHashStr));
