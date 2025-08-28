@@ -843,7 +843,12 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
             infoDlg->setModal(false);
             infoDlg->show();
 
-            QTimer::singleShot(5000, this, [=]() {
+            // Dynamic display time: base 5s + ~1s per 50 chars, capped at 20s
+            QString notifText = QString("%1 proposed changes to '%2' on %3.\n\nMessage:\n%4")
+                                     .arg(peerId, repo, branch, msg);
+            int extraMs = (notifText.length() / 50) * 1000; // ~1s per 50 chars
+            int displayMs = qMin(20000, 5000 + extraMs);
+            QTimer::singleShot(displayMs, this, [=]() {
                 if (infoDlg) {
                     infoDlg->close();
                     infoDlg->deleteLater();
