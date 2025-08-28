@@ -235,6 +235,7 @@ void MainWindow::connectSignals()
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromPanel);
+    connect(m_networkPanel, &NetworkPanel::disconnectFromPeerRequested, this, &MainWindow::handleDisconnectFromPeer);
 
     // No notifications button in this build
 
@@ -472,8 +473,18 @@ void MainWindow::handleGroupMessage(const QString &senderPeerId, const QString &
 
 void MainWindow::handleDisconnectFromPeer(const QString &peerId)
 {
-    Q_UNUSED(peerId);
-    // Refresh UI to reflect disconnected peer states
+    if (!m_networkManager)
+        return;
+    QTcpSocket *sock = m_networkManager->getSocketForPeer(peerId);
+    if (sock)
+    {
+        m_networkPanel->logMessage(QString("Disconnecting from '%1'...").arg(peerId), QColor("#b45309"));
+        sock->disconnectFromHost();
+    }
+    else
+    {
+        m_networkPanel->logMessage(QString("No active connection to '%1' found.").arg(peerId), Qt::red);
+    }
     updateUiFromBackend();
 }
 
