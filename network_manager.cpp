@@ -145,6 +145,61 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
         }
     }
+    else if (messageType == "PROPOSAL_REVIEW_REQUEST")
+    {
+        // Notify UI (MainWindow) to prompt owner if they want to review
+        emit secureMessageReceived(peerId, "PROPOSAL_REVIEW_REQUEST", payload);
+    }
+    else if (messageType == "PROPOSAL_REVIEW_ACCEPTED")
+    {
+        // Owner is ready to receive; trigger sending of any pending proposal bundle.
+        emit secureMessageReceived(peerId, "PROPOSAL_REVIEW_ACCEPTED", payload);
+        QString repoName = payload.value("repoName").toString();
+        QString forBranch = payload.value("forBranch").toString();
+        QString bundlePath;
+        QString outMsg;
+        if (takePendingProposalBundle(peerId, repoName, forBranch, bundlePath, outMsg) && !bundlePath.isEmpty())
+        {
+            QTcpSocket *sock = getSocketForPeer(peerId);
+            if (sock && sock->state() == QAbstractSocket::ConnectedState)
+            {
+                startSendingProposalChunked(sock, repoName, forBranch, bundlePath, outMsg);
+            }
+            else
+            {
+                // Create ad-hoc transfer socket; stash pending to auto-send after handshake
+                DiscoveredPeerInfo info = getDiscoveredPeerInfo(peerId);
+                if (!info.id.isEmpty())
+                {
+                    QTcpSocket *socket = new QTcpSocket(this);
+                    socket->setProperty("is_transfer_socket", true);
+                    QVariantMap pendingProposal;
+                    pendingProposal["type"] = "proposal";
+                    pendingProposal["repoName"] = repoName;
+                    pendingProposal["fromBranch"] = forBranch;
+                    pendingProposal["bundlePath"] = bundlePath;
+                    pendingProposal["message"] = outMsg;
+                    socket->setProperty("pending_proposal_request", QVariant::fromValue(pendingProposal));
+                    m_socketToPeerUsernameMap.insert(socket, info.id);
+                    m_allTcpSockets.append(socket);
+                    connect(socket, &QTcpSocket::connected, this, [this, socket]()
+                            { sendIdentityOverTcp(socket); });
+                    connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
+                    connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
+                    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
+                    socket->connectToHost(info.address, info.tcpPort);
+                }
+                else
+                {
+                    qWarning() << "Cannot connect to peer to send proposal after acceptance:" << peerId;
+                }
+            }
+        }
+    }
+    else if (messageType == "PROPOSAL_REVIEW_REJECTED")
+    {
+        emit secureMessageReceived(peerId, "PROPOSAL_REVIEW_REJECTED", payload);
+    }
     else if (messageType == "PROPOSAL_CHUNK_BEGIN")
     {
         QString transferId = payload.value("transferId").toString();
@@ -154,11 +209,21 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         QString message = payload.value("message").toString();
         if (transferId.isEmpty() || repoName.isEmpty() || totalSize <= 0)
             return;
-        // Always save proposals to a temporary path first. The user will be prompted to save it later.
-        QString targetPath;
-        if (targetPath.isEmpty())
+        // If the owner pre-selected a save path, use it; otherwise, save to a temporary path.
+        QString key = makeProposalKey(peerId, repoName, forBranch);
+        QString chosenFullPath;
+        if (m_pendingProposalSavePaths.contains(key))
         {
-            targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
+            chosenFullPath = m_pendingProposalSavePaths.take(key);
+        }
+        QString targetPath;
+        if (!chosenFullPath.isEmpty())
+        {
+            targetPath = chosenFullPath;
+        }
+        else
+        {
+            targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".zip";
         }
         QDir parentDir = QFileInfo(targetPath).dir();
         if (!parentDir.exists())
@@ -166,12 +231,13 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         auto *transfer = new IncomingFileTransfer;
         transfer->state = IncomingFileTransfer::Receiving;
         transfer->repoName = repoName;
+        // If this is a proposal, we expect a .zip diff archive
+        transfer->properties.insert("type", QString("proposal-chunked"));
         transfer->tempLocalPath = targetPath;
-        transfer->file.setFileName(targetPath);
+        transfer->file.setFileName(transfer->tempLocalPath);
         transfer->totalSize = totalSize;
         transfer->bytesReceived = 0;
         transfer->properties.insert("forBranch", forBranch);
-        transfer->properties.insert("type", QString("proposal-chunked"));
         transfer->properties.insert("message", message);
         if (transfer->file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         {
@@ -180,6 +246,8 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         }
         else
         {
+            qWarning() << "Could not open target file for proposal transfer:" << transfer->tempLocalPath;
+            emit repoBundleCompleted(repoName, transfer->tempLocalPath, false, "Failed to open file for writing");
             delete transfer;
         }
     }
@@ -221,7 +289,11 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             qDebug() << "Chunked proposal received completely for" << repoName << "at" << transfer->tempLocalPath;
         }
         emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Diff file downloaded successfully." : "Size mismatch.");
-        emit changeProposalReceived(peerId, repoName, forBranch, transfer->tempLocalPath, message);
+        // Only notify higher layer if file exists and open succeeded earlier
+        if (QFile::exists(transfer->tempLocalPath))
+        {
+            emit changeProposalReceived(peerId, repoName, forBranch, transfer->tempLocalPath, message);
+        }
         delete transfer;
     }
     else
@@ -301,7 +373,13 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
         if (m_incomingTransfers.contains(socket))
         {
             IncomingFileTransfer *transfer = m_incomingTransfers.value(socket);
-            qint64 bytesToWrite = qMin((qint64)buffer.size(), transfer->totalSize - transfer->bytesReceived);
+            qint64 remaining = transfer->totalSize - transfer->bytesReceived;
+            if (remaining <= 0)
+            {
+                // Already complete, fall through to finishing logic
+                remaining = 0;
+            }
+            qint64 bytesToWrite = qMin((qint64)buffer.size(), remaining);
             if (bytesToWrite > 0)
             {
                 transfer->file.write(buffer.constData(), bytesToWrite);
@@ -1130,6 +1208,33 @@ void NetworkManager::sendEncryptedMessage(QTcpSocket *socket, const QString &mes
     socket->write(block);
 }
 
+void NetworkManager::sendEncryptedToPeerId(const QString &peerId, const QString &messageType, const QVariantMap &payload)
+{
+    QTcpSocket *sock = getSocketForPeer(peerId);
+    if (sock && m_peerCurve25519PublicKeys.contains(peerId) && sock->state() == QAbstractSocket::ConnectedState)
+    {
+        sendEncryptedMessage(sock, messageType, payload);
+        return;
+    }
+    // Queue for later
+    m_queuedEncryptedMessages[peerId].append(qMakePair(messageType, payload));
+    // Proactively connect a transfer socket to flush queue
+    DiscoveredPeerInfo info = getDiscoveredPeerInfo(peerId);
+    if (!info.id.isEmpty())
+    {
+        QTcpSocket *socket = new QTcpSocket(this);
+        socket->setProperty("is_transfer_socket", true);
+        m_socketToPeerUsernameMap.insert(socket, info.id);
+        m_allTcpSockets.append(socket);
+        connect(socket, &QTcpSocket::connected, this, [this, socket]()
+                { sendIdentityOverTcp(socket); });
+        connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
+        connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
+        connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
+        socket->connectToHost(info.address, info.tcpPort);
+    }
+}
+
 void NetworkManager::flushQueuedEncryptedMessagesForPeer(const QString &peerId)
 {
     auto it = m_queuedEncryptedMessages.find(peerId);
@@ -1183,38 +1288,10 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
 
 void NetworkManager::sendProposalToPeer(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
 {
-    QTcpSocket *sock = getSocketForPeer(peerId);
-    if (sock && sock->state() == QAbstractSocket::ConnectedState)
-    {
-        sendChangeProposal(sock, repoDisplayName, fromBranch, bundlePath, proposalMessage);
-        return;
-    }
-
-    // Create a temporary transfer socket and queue the proposal to be sent after handshake
-    DiscoveredPeerInfo info = getDiscoveredPeerInfo(peerId);
-    if (info.id.isEmpty())
-    {
-        qWarning() << "Cannot find peer to send proposal:" << peerId;
-        return;
-    }
-    QTcpSocket *socket = new QTcpSocket(this);
-    socket->setProperty("is_transfer_socket", true);
-    QVariantMap pendingProposal;
-    pendingProposal["type"] = "proposal";
-    pendingProposal["repoName"] = repoDisplayName;
-    pendingProposal["fromBranch"] = fromBranch;
-    pendingProposal["bundlePath"] = bundlePath;
-    pendingProposal["message"] = proposalMessage;
-    socket->setProperty("pending_proposal_request", QVariant::fromValue(pendingProposal));
-
-    m_socketToPeerUsernameMap.insert(socket, info.id);
-    m_allTcpSockets.append(socket);
-    connect(socket, &QTcpSocket::connected, this, [this, socket]()
-            { sendIdentityOverTcp(socket); });
-    connect(socket, &QTcpSocket::readyRead, this, &NetworkManager::onTcpSocketReadyRead);
-    connect(socket, &QTcpSocket::disconnected, this, &NetworkManager::onTcpSocketDisconnected);
-    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), this, &NetworkManager::onTcpSocketError);
-    socket->connectToHost(info.address, info.tcpPort);
+    // Notify owner; wait for acceptance readiness before sending
+    sendProposalReviewRequest(peerId, repoDisplayName, fromBranch, proposalMessage);
+    // Stash the bundle to send once owner signals readiness
+    storePendingProposalBundle(peerId, repoDisplayName, fromBranch, bundlePath, proposalMessage);
 }
 
 void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
@@ -1231,4 +1308,44 @@ DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) 
 QMap<QString, DiscoveredPeerInfo> NetworkManager::getDiscoveredPeers() const
 {
     return m_discoveredPeers;
+}
+
+void NetworkManager::sendProposalReviewRequest(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &proposalMessage)
+{
+    QTcpSocket *sock = getSocketForPeer(peerId);
+    QVariantMap payload;
+    payload["repoName"] = repoDisplayName;
+    payload["forBranch"] = fromBranch;
+    payload["message"] = proposalMessage;
+    if (sock && sock->state() == QAbstractSocket::ConnectedState)
+    {
+        sendEncryptedMessage(sock, "PROPOSAL_REVIEW_REQUEST", payload);
+        return;
+    }
+    // If offline or no socket with pubkey yet, queue the intent
+    m_queuedEncryptedMessages[peerId].append(qMakePair(QString("PROPOSAL_REVIEW_REQUEST"), payload));
+}
+
+void NetworkManager::storePendingProposalBundle(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
+{
+    m_pendingProposalBundles[makeProposalKey(peerId, repoDisplayName, fromBranch)] = qMakePair(bundlePath, proposalMessage);
+}
+
+bool NetworkManager::takePendingProposalBundle(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, QString &outBundlePath, QString &outMessage)
+{
+    QString key = makeProposalKey(peerId, repoDisplayName, fromBranch);
+    if (!m_pendingProposalBundles.contains(key))
+        return false;
+    auto pair = m_pendingProposalBundles.take(key);
+    outBundlePath = pair.first;
+    outMessage = pair.second;
+    return true;
+}
+
+void NetworkManager::setPendingProposalSavePath(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &absolutePath)
+{
+    if (absolutePath.isEmpty())
+        return;
+    QString key = makeProposalKey(peerId, repoDisplayName, fromBranch);
+    m_pendingProposalSavePaths[key] = absolutePath;
 }

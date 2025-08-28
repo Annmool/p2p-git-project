@@ -386,9 +386,9 @@ QWidget *ProjectWindow::createProposeTab()
         }
         else
         {
-            // Notify owner and send bundle over TCP (work when disconnected too)
+            // Notify owner and send the zip immediately via a single high-level call.
             m_networkManager->sendProposalToPeer(m_repoInfo.ownerPeerId, m_repoInfo.displayName, targetBranch, bundlePath, message);
-            CustomMessageBox::information(this, "Proposal Sent", "Your proposed changes have been sent to the owner.");
+            CustomMessageBox::information(this, "Proposal Sent", "Owner has been notified and the diff zip is being sent.");
         }
 
         // Cleanup: checkout back and delete temp branch

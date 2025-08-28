@@ -44,6 +44,10 @@ public:
     void requestBundleFromPeer(const QString &peerId, const QString &repoName, const QString &localPath);
     void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
     void sendEncryptedMessage(QTcpSocket *socket, const QString &messageType, const QVariantMap &payload);
+    // New: send to a peer by id, queuing and auto-connecting if needed
+    void sendEncryptedToPeerId(const QString &peerId, const QString &messageType, const QVariantMap &payload);
+    // Owner-chosen save path for proposal zip prior to transfer start
+    void setPendingProposalSavePath(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &absolutePath);
     void disconnectAllTcpPeers();
     bool hasActiveTcpConnections() const;
     bool startUdpDiscovery(quint16 udpPort = 45454);
@@ -55,6 +59,11 @@ public:
     void rejectPendingTcpConnection(QTcpSocket *pendingSocket);
     void sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage = QString()); // Now uses chunked method
     void sendProposalToPeer(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage = QString());
+    // New: ask owner if they want to review before sending the zip
+    void sendProposalReviewRequest(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &proposalMessage = QString());
+    // New: stash pending proposal bundle until owner accepts review
+    void storePendingProposalBundle(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage);
+    bool takePendingProposalBundle(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, QString &outBundlePath, QString &outMessage);
     QTcpSocket *getSocketForPeer(const QString &peerUsername);
     DiscoveredPeerInfo getDiscoveredPeerInfo(const QString &peerId) const;
     QMap<QString, DiscoveredPeerInfo> getDiscoveredPeers() const;
@@ -137,6 +146,15 @@ private:
 
     // For encrypted, message-based proposal transfers keyed by a transferId (UUID)
     QMap<QString, IncomingFileTransfer *> m_encryptedIncomingProposalTransfers;
+
+    // Collaborator-side: pending bundles waiting for owner to accept review
+    QMap<QString, QPair<QString, QString>> m_pendingProposalBundles; // key -> {bundlePath, message}
+    QString makeProposalKey(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch) const
+    {
+        return peerId + "::" + repoDisplayName + "::" + fromBranch;
+    }
+    // Preferred save paths chosen by owner before incoming transfer begins
+    QMap<QString, QString> m_pendingProposalSavePaths; // key -> absolute save path
 
     QString getPeerDisplayString(QTcpSocket *socket);
     void processIncomingTcpData(QTcpSocket *socket);
