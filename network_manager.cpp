@@ -145,10 +145,141 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
         }
     }
+    else if (messageType == "PROPOSAL_CHUNK_BEGIN") // No change in logic
+    {
+        QString transferId = payload.value("transferId").toString();
+        QString repoName = payload.value("repoName").toString();
+        QString forBranch = payload.value("forBranch").toString();
+        qint64 totalSize = payload.value("totalSize").toLongLong();
+        if (transferId.isEmpty() || repoName.isEmpty() || totalSize <= 0)
+            return;
+        QString targetPath = m_incomingProposalSavePaths.value(peerId).value(repoName); // No change in logic
+        if (targetPath.isEmpty())
+        {
+            targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
+        }
+        QDir parentDir = QFileInfo(targetPath).dir();
+        if (!parentDir.exists())
+            parentDir.mkpath(".");
+        auto *transfer = new IncomingFileTransfer;
+        transfer->state = IncomingFileTransfer::Receiving;
+        transfer->repoName = repoName;
+        transfer->tempLocalPath = targetPath;
+        transfer->file.setFileName(targetPath); // No change in logic
+        transfer->totalSize = totalSize;
+        transfer->bytesReceived = 0;
+        transfer->properties.insert("forBranch", forBranch);
+        transfer->properties.insert("type", QString("proposal-chunked"));
+        if (transfer->file.open(QIODevice::WriteOnly | QIODevice::Truncate)) // Added truncate flag
+        {
+            m_encryptedIncomingProposalTransfers.insert(transferId, transfer);
+            emit repoBundleTransferStarted(repoName, totalSize);
+        }
+        else
+        {
+            delete transfer;
+        }
+    }
+    else if (messageType == "PROPOSAL_CHUNK_DATA")
+    {
+        QString transferId = payload.value("transferId").toString();
+        qint64 offset = payload.value("offset").toLongLong();
+        QByteArray data = QByteArray::fromBase64(payload.value("data").toByteArray());
+        IncomingFileTransfer *transfer = m_encryptedIncomingProposalTransfers.value(transferId, nullptr);
+        if (!transfer)
+            return;
+        // Seek only if out-of-order (should be sequential)
+        if (transfer->file.pos() != offset)
+            transfer->file.seek(offset);
+        qint64 written = transfer->file.write(data);
+        if (written > 0) // No change in logic
+        {
+            transfer->bytesReceived = qMax(transfer->bytesReceived, offset + written); // Changed to use qMax
+            emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
+        }
+    }
+    else if (messageType == "PROPOSAL_CHUNK_END")
+    {
+        QString transferId = payload.value("transferId").toString();
+        IncomingFileTransfer *transfer = m_encryptedIncomingProposalTransfers.take(transferId);
+        if (!transfer)
+            return;
+        QString repoName = transfer->repoName;
+        QString forBranch = transfer->properties.value("forBranch").toString();
+        transfer->file.close();
+        bool success = (transfer->bytesReceived == transfer->totalSize); // No change in logic
+        if (!success)                                                    // Added logging for size mismatch
+        {
+            qWarning() << "Chunked proposal size mismatch for" << repoName << ":" << transfer->bytesReceived << "/" << transfer->totalSize << "; saved at" << transfer->tempLocalPath;
+        }
+        else
+        {
+            qDebug() << "Chunked proposal received completely for" << repoName << "at" << transfer->tempLocalPath;
+        }
+        emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Diff file downloaded successfully." : "Size mismatch.");
+        emit changeProposalReceived(peerId, repoName, forBranch, transfer->tempLocalPath);
+        delete transfer;
+    }
     else
     {
         emit secureMessageReceived(peerId, messageType, payload);
     }
+}
+
+void NetworkManager::startSendingProposalChunked(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath)
+{
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
+        return;
+    QFile diffFile(bundlePath);
+    if (!diffFile.open(QIODevice::ReadOnly))
+    {
+        qWarning() << "Failed to open diff file for proposal (chunked):" << bundlePath;
+        return;
+    }
+    qint64 fileSize = diffFile.size();
+    if (fileSize <= 0)
+    {
+        qWarning() << "Refusing to send empty/invalid diff file (chunked):" << bundlePath << "size:" << fileSize;
+        diffFile.close();
+        QFile::remove(bundlePath);
+        return;
+    }
+    QString transferId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    // Notify receiver to prepare file
+    QVariantMap beginMeta;
+    beginMeta["transferId"] = transferId;
+    beginMeta["repoName"] = repoDisplayName;
+    beginMeta["forBranch"] = fromBranch;
+    beginMeta["totalSize"] = fileSize;
+    sendEncryptedMessage(targetPeerSocket, "PROPOSAL_CHUNK_BEGIN", beginMeta);
+
+    const qint64 chunkSize = 10 * 1024; // 10KB
+    qint64 offset = 0;
+    QByteArray buffer;
+    buffer.resize(chunkSize);
+    while (!diffFile.atEnd())
+    {
+        qint64 bytesRead = diffFile.read(buffer.data(), chunkSize);
+        if (bytesRead <= 0)
+            break;
+        QVariantMap chunk;
+        chunk["transferId"] = transferId;
+        chunk["offset"] = offset;
+        chunk["data"] = QByteArray(buffer.constData(), bytesRead).toBase64();
+        sendEncryptedMessage(targetPeerSocket, "PROPOSAL_CHUNK_DATA", chunk);
+        offset += bytesRead;
+        emit repoBundleChunkReceived(repoDisplayName, offset, fileSize);
+    }
+    diffFile.close();
+
+    QVariantMap endMeta;
+    endMeta["transferId"] = transferId;
+    endMeta["repoName"] = repoDisplayName;
+    sendEncryptedMessage(targetPeerSocket, "PROPOSAL_CHUNK_END", endMeta);
+
+    qDebug() << "Chunked diff file transfer completed for proposal - repo:" << repoDisplayName;
+    QFile::remove(bundlePath);
 }
 
 void NetworkManager::processIncomingTcpData(QTcpSocket *socket)

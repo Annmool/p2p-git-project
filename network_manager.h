@@ -65,6 +65,8 @@ public:
     bool isConnectionPending(QTcpSocket *socket) const;
     void addSharedRepoToPeer(const QString &peerId, const QString &repoName);
     QString getMyUsername() const { return m_myUsername; }
+    // Chunked, encrypted proposal sending (10KB chunks)
+    void startSendingProposalChunked(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath);
 
 signals:
     void incomingTcpConnectionRequest(QTcpSocket *pendingSocket, const QHostAddress &address, quint16 port, const QString &discoveredUsername);
@@ -139,6 +141,9 @@ private:
     QMap<QString, QMap<QString, QString>> m_incomingProposalSavePaths;
     // Pending proposals keyed by the socket they were initiated on
     QMap<QTcpSocket *, QVariantMap> m_pendingProposalsBySocket;
+
+    // For encrypted, message-based proposal transfers keyed by a transferId (UUID)
+    QMap<QString, IncomingFileTransfer *> m_encryptedIncomingProposalTransfers;
 
     QString getPeerDisplayString(QTcpSocket *socket);
     void processIncomingTcpData(QTcpSocket *socket);
