@@ -369,7 +369,7 @@ QWidget *ProjectWindow::createProposeTab()
         }
 
         // Build a diff bundle tempBranch ^ targetBranch
-        QTemporaryFile tempBundle(QDir::tempPath() + "/proposal_XXXXXX.bundle");
+        QTemporaryFile tempBundle(QDir::tempPath() + "/proposal_XXXXXX.zip");
         tempBundle.setAutoRemove(false);
         if (!tempBundle.open())
         {
@@ -379,7 +379,7 @@ QWidget *ProjectWindow::createProposeTab()
         QString bundlePath = tempBundle.fileName();
         tempBundle.close();
 
-        if (!m_gitBackend.createDiffBundle(bundlePath.toStdString(), tempBranch.toStdString(), targetBranch.toStdString(), cmErr))
+        if (!m_gitBackend.createDiffArchive(bundlePath.toStdString(), tempBranch.toStdString(), targetBranch.toStdString(), cmErr))
         {
             QFile::remove(bundlePath);
             CustomMessageBox::warning(this, "No Changes", QString::fromStdString(cmErr).isEmpty() ? "No differences to propose." : QString::fromStdString(cmErr));
