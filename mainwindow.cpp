@@ -408,37 +408,22 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
     // 5. Connect accept/reject handlers. They will now use `savePath`.
     connect(dlg, &ProposalReviewDialog::acceptedProposal, this, [=]() mutable
             {
-                QTcpSocket *collabSocket = m_networkManager->getSocketForPeer(fromPeer);
-                if (collabSocket)
-                {
-                    QVariantMap dec;
-                    dec["repoName"] = repoName;
-                    dec["forBranch"] = forBranch;
-                    dec["accepted"] = true;
-                    m_networkManager->sendEncryptedMessage(collabSocket, "PROPOSAL_REVIEW_DECISION", dec);
-                }
-
-                // New behavior: no git operations. Only notify collaborator that owner accepted.
-                if (collabSocket)
-                {
-                    QVariantMap dec;
-                    dec["repoName"] = repoName;
-                    dec["forBranch"] = forBranch;
-                    dec["accepted"] = true;
-                    m_networkManager->sendEncryptedMessage(collabSocket, "PROPOSAL_REVIEW_DECISION", dec);
-                } });
+                // Notify collaborator once that the proposal was accepted
+                QVariantMap dec;
+                dec["repoName"] = repoName;
+                dec["forBranch"] = forBranch;
+                dec["accepted"] = true;
+                m_networkManager->sendEncryptedToPeerId(fromPeer, "PROPOSAL_REVIEW_DECISION", dec);
+            });
 
     connect(dlg, &ProposalReviewDialog::rejectedProposal, this, [=]() mutable
             {
-                QTcpSocket *collabSocket = m_networkManager->getSocketForPeer(fromPeer);
-                if (collabSocket)
-                {
-                    QVariantMap dec;
-                    dec["repoName"] = repoName;
-                    dec["forBranch"] = forBranch;
-                    dec["accepted"] = false;
-                    m_networkManager->sendEncryptedMessage(collabSocket, "PROPOSAL_REVIEW_DECISION", dec);
-                } });
+                QVariantMap dec;
+                dec["repoName"] = repoName;
+                dec["forBranch"] = forBranch;
+                dec["accepted"] = false;
+                m_networkManager->sendEncryptedToPeerId(fromPeer, "PROPOSAL_REVIEW_DECISION", dec);
+            });
 
     dlg->show(); });
 }
@@ -864,22 +849,23 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
                     infoDlg->deleteLater();
                 }
 
-                // Ask for a directory to save the incoming .zip
+                // Let the owner choose directory AND filename to save the incoming .zip
                 QString defaultBase = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
                 if (defaultBase.isEmpty()) defaultBase = QDir::homePath();
-                QString chosenDir = CustomFileDialog::getExistingDirectory(this,
-                                                                           "Choose directory to save incoming proposal diff",
-                                                                           defaultBase);
-                if (chosenDir.isEmpty()) {
-                    // Fallback to default directory if user cancels
-                    chosenDir = defaultBase;
+                QString defaultName = QString("proposal_%1_from_%2.zip").arg(repo, peerId);
+                QString defaultPath = QDir(defaultBase).filePath(defaultName);
+                QString fullPath = CustomFileDialog::getSaveFileName(this,
+                                                                     "Choose file to save incoming proposal diff",
+                                                                     defaultPath,
+                                                                     "Zip Archive (*.zip)");
+                if (fullPath.isEmpty()) {
+                    // Fallback to default path if user cancels
+                    fullPath = defaultPath;
                 }
 
-                QString defaultName = QString("proposal_%1_from_%2.zip").arg(repo, peerId);
-                QString fullPath = QDir(chosenDir).filePath(defaultName);
-
-                // Ensure the directory exists
-                QDir().mkpath(chosenDir);
+                // Ensure the directory exists for the chosen path
+                QDir targetDir = QFileInfo(fullPath).dir();
+                if (!targetDir.exists()) targetDir.mkpath(".");
 
                 // Set pending path so transfer writes directly here
                 if (m_networkManager) {
@@ -906,6 +892,24 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
     if (messageType == "PROPOSAL_REVIEW_REJECTED")
     {
         notify("Review Declined", QString("%1 declined to review your proposal.").arg(peerId));
+        return;
+    }
+    if (messageType == "PROPOSAL_REVIEW_DECISION")
+    {
+        // Collaborator receives owner decision after reviewing downloaded zip
+        QString repo = payload.value("repoName").toString();
+        QString branch = payload.value("forBranch").toString();
+        bool accepted = payload.value("accepted").toBool();
+        if (accepted)
+        {
+            notify("Proposal Accepted", QString("%1 accepted your proposal for '%2' on %3. They may upload a new version soon.")
+                                            .arg(peerId, repo, branch));
+        }
+        else
+        {
+            notify("Proposal Rejected", QString("%1 rejected your proposal for '%2' on %3.")
+                                            .arg(peerId, repo, branch));
+        }
         return;
     }
 }
