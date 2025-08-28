@@ -311,14 +311,7 @@ QWidget *ProjectWindow::createProposeTab()
             CustomMessageBox::information(this, "Not Allowed", "Owners don't propose; commit directly.");
             return;
         }
-        if (!m_networkManager)
-            return;
-        QTcpSocket *ownerSocket = m_networkManager->getSocketForPeer(m_repoInfo.ownerPeerId);
-        if (!ownerSocket)
-        {
-            CustomMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(m_repoInfo.ownerPeerId));
-            return;
-        }
+
         QString targetBranch = m_targetBranchDropdown->currentText().trimmed();
         if (targetBranch.isEmpty())
         {
@@ -1006,6 +999,9 @@ void ProjectWindow::onProposeChangesClicked()
     }
     m_proposeChangesButton->setEnabled(false);
     m_proposeChangesButton->setText("Bundling...");
+    // The bundle creation and sending is handled within the Propose tab's button now.
+    // This is a legacy button from the History tab that is now hidden.
+    // To be safe, we can emit the main signal if this is ever clicked.
     emit proposeChangesRequested(m_repoInfo.ownerPeerId, m_repoInfo.displayName, QString::fromStdString(currentBranch));
 }
 

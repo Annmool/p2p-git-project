@@ -145,15 +145,17 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             emit collaboratorRemovedReceived(peerId, ownerRepoAppId, repoDisplayName);
         }
     }
-    else if (messageType == "PROPOSAL_CHUNK_BEGIN") // No change in logic
+    else if (messageType == "PROPOSAL_CHUNK_BEGIN")
     {
         QString transferId = payload.value("transferId").toString();
         QString repoName = payload.value("repoName").toString();
         QString forBranch = payload.value("forBranch").toString();
         qint64 totalSize = payload.value("totalSize").toLongLong();
+        QString message = payload.value("message").toString();
         if (transferId.isEmpty() || repoName.isEmpty() || totalSize <= 0)
             return;
-        QString targetPath = m_incomingProposalSavePaths.value(peerId).value(repoName); // No change in logic
+        // Always save proposals to a temporary path first. The user will be prompted to save it later.
+        QString targetPath;
         if (targetPath.isEmpty())
         {
             targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
@@ -165,12 +167,13 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         transfer->state = IncomingFileTransfer::Receiving;
         transfer->repoName = repoName;
         transfer->tempLocalPath = targetPath;
-        transfer->file.setFileName(targetPath); // No change in logic
+        transfer->file.setFileName(targetPath);
         transfer->totalSize = totalSize;
         transfer->bytesReceived = 0;
         transfer->properties.insert("forBranch", forBranch);
         transfer->properties.insert("type", QString("proposal-chunked"));
-        if (transfer->file.open(QIODevice::WriteOnly | QIODevice::Truncate)) // Added truncate flag
+        transfer->properties.insert("message", message);
+        if (transfer->file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         {
             m_encryptedIncomingProposalTransfers.insert(transferId, transfer);
             emit repoBundleTransferStarted(repoName, totalSize);
@@ -192,9 +195,9 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
         if (transfer->file.pos() != offset)
             transfer->file.seek(offset);
         qint64 written = transfer->file.write(data);
-        if (written > 0) // No change in logic
+        if (written > 0)
         {
-            transfer->bytesReceived = qMax(transfer->bytesReceived, offset + written); // Changed to use qMax
+            transfer->bytesReceived = qMax(transfer->bytesReceived, offset + written);
             emit repoBundleChunkReceived(transfer->repoName, transfer->bytesReceived, transfer->totalSize);
         }
     }
@@ -206,9 +209,10 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             return;
         QString repoName = transfer->repoName;
         QString forBranch = transfer->properties.value("forBranch").toString();
+        QString message = transfer->properties.value("message").toString();
         transfer->file.close();
-        bool success = (transfer->bytesReceived == transfer->totalSize); // No change in logic
-        if (!success)                                                    // Added logging for size mismatch
+        bool success = (transfer->bytesReceived == transfer->totalSize);
+        if (!success)
         {
             qWarning() << "Chunked proposal size mismatch for" << repoName << ":" << transfer->bytesReceived << "/" << transfer->totalSize << "; saved at" << transfer->tempLocalPath;
         }
@@ -217,7 +221,7 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
             qDebug() << "Chunked proposal received completely for" << repoName << "at" << transfer->tempLocalPath;
         }
         emit repoBundleCompleted(repoName, transfer->tempLocalPath, success, success ? "Diff file downloaded successfully." : "Size mismatch.");
-        emit changeProposalReceived(peerId, repoName, forBranch, transfer->tempLocalPath);
+        emit changeProposalReceived(peerId, repoName, forBranch, transfer->tempLocalPath, message);
         delete transfer;
     }
     else
@@ -226,7 +230,7 @@ void NetworkManager::handleEncryptedPayload(const QString &peerId, const QVarian
     }
 }
 
-void NetworkManager::startSendingProposalChunked(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath)
+void NetworkManager::startSendingProposalChunked(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
 {
     if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
         return;
@@ -252,6 +256,10 @@ void NetworkManager::startSendingProposalChunked(QTcpSocket *targetPeerSocket, c
     beginMeta["repoName"] = repoDisplayName;
     beginMeta["forBranch"] = fromBranch;
     beginMeta["totalSize"] = fileSize;
+    if (!proposalMessage.isEmpty())
+    {
+        beginMeta["message"] = proposalMessage;
+    }
     sendEncryptedMessage(targetPeerSocket, "PROPOSAL_CHUNK_BEGIN", beginMeta);
 
     const qint64 chunkSize = 10 * 1024; // 10KB
@@ -454,97 +462,6 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
                 {
                     socket->disconnectFromHost();
                 }
-            }
-        }
-        else if (messageType == "PROPOSAL_META_ACK")
-        {
-            in.startTransaction();
-            QString repoName, forBranch, savePath;
-            in >> repoName >> forBranch >> savePath;
-            if (!in.commitTransaction())
-                return;
-            // Owner confirmed. Set target path and begin streaming (sender side uses pending map)
-            // This branch is processed by the SENDER (collaborator) when owner acknowledges on the same socket.
-            // We stored the pending proposal on this socket when we sent META.
-            QVariantMap pending = m_pendingProposalsBySocket.value(socket);
-            if (!pending.isEmpty() && pending.value("repoName").toString() == repoName)
-            {
-                // Persist owner-chosen path in case we want to hint, but actual write target is on owner side
-                startSendingProposal(socket, repoName, pending.value("fromBranch").toString(), pending.value("bundlePath").toString());
-                m_pendingProposalsBySocket.remove(socket);
-            }
-        }
-        else if (messageType == "PROPOSE_CHANGES_BUNDLE_START")
-        {
-            in.startTransaction();
-            QString repoName;
-            QString forBranch;
-            qint64 totalSize;
-            in >> repoName >> forBranch >> totalSize;
-            if (!in.commitTransaction())
-                return;
-
-            // Decide where to save: use pre-set target path if provided; else a temp bundle
-            QString peerUsername = m_socketToPeerUsernameMap.value(socket);
-            QString targetPath;
-            if (!peerUsername.isEmpty() && m_incomingProposalSavePaths.contains(peerUsername))
-            {
-                targetPath = m_incomingProposalSavePaths.value(peerUsername).value(repoName);
-            }
-            if (targetPath.isEmpty())
-            {
-                targetPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/" + QUuid::createUuid().toString() + ".bundle";
-            }
-            // Ensure the parent directory exists
-            QDir parentDir = QFileInfo(targetPath).dir();
-            if (!parentDir.exists())
-                parentDir.mkpath(".");
-
-            auto *transfer = new IncomingFileTransfer;
-            transfer->state = IncomingFileTransfer::Receiving;
-            transfer->repoName = repoName;
-            transfer->tempLocalPath = targetPath;
-            transfer->file.setFileName(targetPath);
-            transfer->totalSize = totalSize;
-            transfer->bytesReceived = 0;
-            transfer->properties.insert("forBranch", forBranch);
-            transfer->properties.insert("type", QString("proposal"));
-            if (transfer->file.open(QIODevice::WriteOnly))
-            {
-                m_incomingTransfers.insert(socket, transfer);
-                // Reuse progress signals
-                emit repoBundleTransferStarted(repoName, totalSize);
-            }
-            else
-            {
-                qWarning() << "Could not open target path for proposal bundle:" << targetPath;
-                delete transfer;
-            }
-        }
-        else if (messageType == "PROPOSE_CHANGES_BUNDLE_END")
-        {
-            in.startTransaction();
-            QString repoName;
-            in >> repoName;
-            if (!in.commitTransaction())
-                return;
-
-            if (m_incomingTransfers.contains(socket))
-            {
-                IncomingFileTransfer *transfer = m_incomingTransfers.take(socket);
-                QString forBranch = transfer->properties.value("forBranch").toString();
-                transfer->file.close();
-                bool success = (transfer->bytesReceived == transfer->totalSize);
-                QString fromPeer = m_socketToPeerUsernameMap.value(socket, QString());
-                if (success)
-                {
-                    emit changeProposalReceived(fromPeer, repoName, forBranch, transfer->tempLocalPath);
-                }
-                else
-                {
-                    QFile::remove(transfer->tempLocalPath);
-                }
-                delete transfer;
             }
         }
         else if (messageType == "BROADCAST_MESSAGE")
@@ -1078,63 +995,6 @@ QString NetworkManager::findUsernameForAddress(const QHostAddress &address)
     return QString();
 }
 
-void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath)
-{
-    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
-        return;
-    QFile bundleFile(bundleFilePath);
-    if (!bundleFile.open(QIODevice::ReadOnly))
-        return;
-
-    QByteArray startBlock;
-    QDataStream startOut(&startBlock, QIODevice::WriteOnly);
-    startOut.setVersion(QDataStream::Qt_5_15);
-    startOut << QString("SEND_REPO_BUNDLE_START") << repoDisplayName << bundleFile.size();
-    targetPeerSocket->write(startBlock);
-
-    char buffer[65536];
-    while (!bundleFile.atEnd())
-    {
-        qint64 bytesRead = bundleFile.read(buffer, sizeof(buffer));
-        if (bytesRead > 0)
-        {
-            targetPeerSocket->write(buffer, bytesRead);
-            if (!targetPeerSocket->waitForBytesWritten(-1))
-            {
-                bundleFile.close();
-                return;
-            }
-        }
-    }
-    bundleFile.close();
-
-    QByteArray endBlock;
-    QDataStream endOut(&endBlock, QIODevice::WriteOnly);
-    endOut.setVersion(QDataStream::Qt_5_15);
-    endOut << QString("SEND_REPO_BUNDLE_END") << repoDisplayName;
-    targetPeerSocket->write(endBlock);
-
-    QString recipient = m_socketToPeerUsernameMap.value(targetPeerSocket, "Unknown Peer");
-    emit repoBundleSent(repoDisplayName, recipient);
-    // Notify receiver to add repo to managed list
-    QVariantMap payload;
-    payload["repoDisplayName"] = repoDisplayName;
-    payload["senderPeerId"] = m_myUsername;
-    payload["localPathHint"] = ""; // receiver can choose location
-    // Include canonical chat channel id and current members so collaborators can chat
-    if (m_repoManager_ptr)
-    {
-        ManagedRepositoryInfo ownerRepoInfo = m_repoManager_ptr->getRepositoryInfoByDisplayName(repoDisplayName);
-        if (ownerRepoInfo.isValid() && ownerRepoInfo.isOwner)
-        {
-            payload["ownerRepoAppId"] = ownerRepoInfo.appId;
-            payload["groupMembers"] = ownerRepoInfo.groupMembers;
-        }
-    }
-    sendEncryptedMessage(targetPeerSocket, "ADD_MANAGED_REPO", payload);
-    QFile::remove(bundleFilePath);
-}
-
 void NetworkManager::rejectPendingTcpConnection(QTcpSocket *pendingSocket)
 {
     if (m_pendingConnections.contains(pendingSocket))
@@ -1321,45 +1181,6 @@ void NetworkManager::handleRepoRequest(QTcpSocket *socket, const QString &reques
     }
 }
 
-void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
-{
-    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
-        return;
-    QFile bundleFile(bundlePath);
-    if (!bundleFile.open(QIODevice::ReadOnly))
-        return;
-
-    // First, send an encrypted metadata message so owner can choose a save path and explicitly acknowledge
-    QVariantMap meta;
-    meta["repoName"] = repoDisplayName;
-    meta["forBranch"] = fromBranch;
-    meta["size"] = bundleFile.size();
-    if (!proposalMessage.isEmpty())
-        meta["message"] = proposalMessage;
-    sendEncryptedMessage(targetPeerSocket, "PROPOSAL_META", meta);
-    // Queue pending proposal to start after owner's ACK arrives
-    QVariantMap pending;
-    pending["repoName"] = repoDisplayName;
-    pending["fromBranch"] = fromBranch;
-    pending["bundlePath"] = bundlePath;
-    m_pendingProposalsBySocket[targetPeerSocket] = pending;
-}
-
-DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const
-{
-    return m_discoveredPeers.value(peerId, DiscoveredPeerInfo());
-}
-
-QMap<QString, DiscoveredPeerInfo> NetworkManager::getDiscoveredPeers() const
-{
-    return m_discoveredPeers;
-}
-
-void NetworkManager::setIncomingProposalSavePath(const QString &peerId, const QString &repoDisplayName, const QString &targetFilePath)
-{
-    m_incomingProposalSavePaths[peerId][repoDisplayName] = targetFilePath;
-}
-
 void NetworkManager::sendProposalToPeer(const QString &peerId, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
 {
     QTcpSocket *sock = getSocketForPeer(peerId);
@@ -1396,39 +1217,18 @@ void NetworkManager::sendProposalToPeer(const QString &peerId, const QString &re
     socket->connectToHost(info.address, info.tcpPort);
 }
 
-void NetworkManager::startSendingProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath)
+void NetworkManager::sendChangeProposal(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &fromBranch, const QString &bundlePath, const QString &proposalMessage)
 {
-    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
-        return;
-    QFile bundleFile(bundlePath);
-    if (!bundleFile.open(QIODevice::ReadOnly))
-        return;
+    // This now acts as a public wrapper for the chunked method.
+    startSendingProposalChunked(targetPeerSocket, repoDisplayName, fromBranch, bundlePath, proposalMessage);
+}
 
-    QByteArray startBlock;
-    QDataStream startOut(&startBlock, QIODevice::WriteOnly);
-    startOut.setVersion(QDataStream::Qt_5_15);
-    startOut << QString("PROPOSE_CHANGES_BUNDLE_START") << repoDisplayName << fromBranch << bundleFile.size();
-    targetPeerSocket->write(startBlock);
+DiscoveredPeerInfo NetworkManager::getDiscoveredPeerInfo(const QString &peerId) const
+{
+    return m_discoveredPeers.value(peerId, DiscoveredPeerInfo());
+}
 
-    char buffer[65536];
-    while (!bundleFile.atEnd())
-    {
-        qint64 bytesRead = bundleFile.read(buffer, sizeof(buffer));
-        if (bytesRead > 0)
-        {
-            targetPeerSocket->write(buffer, bytesRead);
-            if (!targetPeerSocket->waitForBytesWritten(-1))
-            {
-                bundleFile.close();
-                return;
-            }
-        }
-    }
-    bundleFile.close();
-
-    QByteArray endBlock;
-    QDataStream endOut(&endBlock, QIODevice::WriteOnly);
-    endOut.setVersion(QDataStream::Qt_5_15);
-    endOut << QString("PROPOSE_CHANGES_BUNDLE_END") << repoDisplayName;
-    targetPeerSocket->write(endBlock);
+QMap<QString, DiscoveredPeerInfo> NetworkManager::getDiscoveredPeers() const
+{
+    return m_discoveredPeers;
 }
