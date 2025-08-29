@@ -1030,8 +1030,11 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
     if (tempGitBackend.createBundle(uniqueOutDir.toStdString(), repoToBundle.displayName.toStdString(), bundleFilePathStd, errorMsgBundle))
     {
         m_networkPanel->logMessage(QString("Bundle for '%1' created. Starting transfer to %2...").arg(repoDisplayName, sourcePeerUsername), "purple");
-        // This is now an internal detail of NetworkManager
-        // m_networkManager->startSendingBundle(requestingPeerSocket, repoDisplayName, QString::fromStdString(bundleFilePathStd));
+        // Kick off the actual transfer over the same socket
+        if (m_networkManager)
+        {
+            m_networkManager->startSendingBundle(requestingPeerSocket, repoDisplayName, QString::fromStdString(bundleFilePathStd));
+        }
     }
     else
     {
@@ -1185,8 +1188,9 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
         return;
     }
 
-    // This handler is now ONLY for clones. Proposals are handled by handleIncomingChangeProposal.
-    if (!m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoDisplayName != repoName)
+    // This handler is only for clones with git bundle files (.bundle). Proposals (.zip) are handled elsewhere.
+    if (!localBundlePath.endsWith(".bundle", Qt::CaseInsensitive) ||
+        !m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoDisplayName != repoName)
     {
         // This can happen if a proposal bundle download finishes. Ignore it here.
         qDebug() << "Bundle completed for non-clone operation:" << repoName;

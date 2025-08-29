@@ -389,6 +389,17 @@ void NetworkManager::processIncomingTcpData(QTcpSocket *socket)
             }
             if (transfer->bytesReceived < transfer->totalSize)
                 return;
+            // Safety: if we've received the full payload, finalize even if END marker hasn't
+            // been parsed yet. This prevents UI from sticking at 100% when END is delayed.
+            if (m_incomingTransfers.contains(socket))
+            {
+                IncomingFileTransfer *done = m_incomingTransfers.take(socket);
+                done->file.close();
+                bool success = (done->bytesReceived == done->totalSize);
+                emit repoBundleCompleted(done->repoName, done->tempLocalPath, success, success ? "Transfer complete." : "Size mismatch.");
+                delete done;
+                // Do not return; continue to parse any subsequent framed messages (e.g., END)
+            }
         }
 
         // First, ensure we have at least a complete message type string available
@@ -796,6 +807,76 @@ void NetworkManager::sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const Q
     out.setVersion(QDataStream::Qt_5_15);
     out << QString("REQUEST_REPO_BUNDLE") << m_myUsername << repoDisplayName << requesterLocalPath;
     targetPeerSocket->write(block);
+}
+
+void NetworkManager::startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath)
+{
+    if (!targetPeerSocket || targetPeerSocket->state() != QAbstractSocket::ConnectedState)
+        return;
+    QFile f(bundleFilePath);
+    if (!f.open(QIODevice::ReadOnly))
+    {
+        qWarning() << "Could not open bundle for sending:" << bundleFilePath;
+        return;
+    }
+    qint64 totalSize = f.size();
+    if (totalSize <= 0)
+    {
+        qWarning() << "Refusing to send empty bundle file:" << bundleFilePath;
+        f.close();
+        return;
+    }
+
+    // Announce start
+    {
+        QByteArray start;
+        QDataStream out(&start, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_5_15);
+        out << QString("SEND_REPO_BUNDLE_START") << repoDisplayName << totalSize;
+        targetPeerSocket->write(start);
+    }
+
+    const qint64 chunkSize = 32 * 1024; // 32KB chunks for efficiency
+    QByteArray buffer;
+    buffer.resize(chunkSize);
+    qint64 sent = 0;
+    while (!f.atEnd())
+    {
+        qint64 n = f.read(buffer.data(), chunkSize);
+        if (n <= 0)
+            break;
+        qint64 written = targetPeerSocket->write(buffer.constData(), n);
+        if (written < 0)
+        {
+            qWarning() << "Socket write failed while sending bundle for" << repoDisplayName << ":" << targetPeerSocket->errorString();
+            break;
+        }
+        sent += written;
+        emit repoBundleChunkReceived(repoDisplayName, sent, totalSize);
+        if (!targetPeerSocket->waitForBytesWritten(30000))
+        {
+            qWarning() << "Timeout waiting for bytes to flush while sending bundle";
+            break;
+        }
+    }
+    f.close();
+
+    // Signal end
+    {
+        QByteArray end;
+        QDataStream out(&end, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_5_15);
+        out << QString("SEND_REPO_BUNDLE_END") << repoDisplayName;
+        targetPeerSocket->write(end);
+        targetPeerSocket->waitForBytesWritten(10000);
+    }
+
+    // If this is a dedicated transfer socket, close it to signal EOF clearly
+    if (targetPeerSocket->property("is_transfer_socket").toBool())
+    {
+        targetPeerSocket->disconnectFromHost();
+    }
+    qDebug() << "Finished sending bundle for" << repoDisplayName << ", size=" << totalSize;
 }
 
 bool NetworkManager::startTcpServer(quint16 port)

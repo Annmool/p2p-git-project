@@ -43,6 +43,8 @@ public:
     void connectAndRequestBundle(const QHostAddress &host, quint16 port, const QString &myUsername, const QString &repoName, const QString &localPath);
     void requestBundleFromPeer(const QString &peerId, const QString &repoName, const QString &localPath);
     void sendRepoBundleRequest(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &requesterLocalPath);
+    // Send a repository bundle file to a peer over an existing TCP socket
+    void startSendingBundle(QTcpSocket *targetPeerSocket, const QString &repoDisplayName, const QString &bundleFilePath);
     void sendEncryptedMessage(QTcpSocket *socket, const QString &messageType, const QVariantMap &payload);
     // New: send to a peer by id, queuing and auto-connecting if needed
     void sendEncryptedToPeerId(const QString &peerId, const QString &messageType, const QVariantMap &payload);

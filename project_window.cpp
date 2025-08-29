@@ -453,10 +453,10 @@ void ProjectWindow::setupUi()
     connect(m_branchComboBox, &QComboBox::currentTextChanged, this, &ProjectWindow::viewRemoteBranchHistory);
 
     // Add tabs to tab widget
-    // Only owners see the Changes tab. Collaborators see the Propose tab.
-    if (m_repoInfo.isOwner)
-        m_tabWidget->addTab(m_changesTab, "Changes");
-    else
+    // Both owners and collaborators see the Changes tab.
+    // Collaborators additionally see the Propose tab.
+    m_tabWidget->addTab(m_changesTab, "Changes");
+    if (!m_repoInfo.isOwner)
         m_tabWidget->addTab(m_proposeTab, "Propose");
     m_tabWidget->addTab(m_historyTab, "History");
     m_tabWidget->addTab(m_collabTab, "Collaboration");
@@ -1007,6 +1007,11 @@ void ProjectWindow::onProposeChangesClicked()
 
 void ProjectWindow::handleFetchBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message)
 {
+    // Ignore non-bundle files (e.g., proposal .zip). This handler is for git bundle fetches only.
+    if (!localBundlePath.endsWith(".bundle", Qt::CaseInsensitive))
+    {
+        return;
+    }
     m_fetchButton->setEnabled(true);
     m_fetchButton->setText("Fetch");
     if (!success)
