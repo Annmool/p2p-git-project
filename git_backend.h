@@ -48,6 +48,8 @@ public:
     bool createBundle(const std::string &outputDir, const std::string &bundleNameSuggestion, std::string &outBundleFilePath, std::string &error_message);
     bool fetchFromBundle(const std::string &bundlePath, std::string &error_message);
     bool createDiffArchive(const std::string &output_zip_path, const std::string &local_branch, const std::string &remote_branch_base, std::string &error_message);
+    // Overload: only include diffs for the given relative paths
+    bool createDiffArchive(const std::string &output_zip_path, const std::string &local_branch, const std::string &remote_branch_base, const std::vector<std::string> &include_paths, std::string &error_message);
     bool applyBundle(const std::string &bundle_path, std::string &error_message);
 
     // Staging and Committing

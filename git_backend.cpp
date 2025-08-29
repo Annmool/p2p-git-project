@@ -654,6 +654,110 @@ bool GitBackend::createDiffArchive(const std::string &output_zip_path, const std
     return true;
 }
 
+bool GitBackend::createDiffArchive(const std::string &output_zip_path,
+                                   const std::string &local_branch,
+                                   const std::string &remote_branch_base,
+                                   const std::vector<std::string> &include_paths,
+                                   std::string &error_message)
+{
+    if (!isRepositoryOpen())
+    {
+        error_message = "No repository open.";
+        return false;
+    }
+
+    // Map include paths to a fast lookup set of QStrings (normalized relative paths)
+    QSet<QString> includeSet;
+    includeSet.reserve((int)include_paths.size());
+    for (const auto &p : include_paths)
+    {
+        includeSet.insert(QString::fromStdString(p));
+    }
+
+    QString tempPath = QDir::temp().filePath("SyncIt-Diff-" + QUuid::createUuid().toString());
+    QDir tempDir(tempPath);
+    if (!tempDir.mkpath("."))
+    {
+        error_message = "Could not create temporary directory for diffs.";
+        return false;
+    }
+
+    QString diffRange = QString::fromStdString(remote_branch_base) + ".." + QString::fromStdString(local_branch);
+
+    // Ask git for changed files, but we’ll filter to includeSet
+    QProcess listFilesProcess;
+    listFilesProcess.setWorkingDirectory(QString::fromStdString(m_currentRepoPath));
+    listFilesProcess.start("git", {"diff", "--name-only", diffRange});
+    if (!listFilesProcess.waitForFinished() || listFilesProcess.exitCode() != 0)
+    {
+        error_message = "Could not list changed files. Stderr: " + listFilesProcess.readAllStandardError().toStdString();
+        tempDir.removeRecursively();
+        return false;
+    }
+
+    QStringList changedList = QString(listFilesProcess.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+    QStringList files;
+    for (const QString &rel : changedList)
+    {
+        if (includeSet.contains(rel))
+            files.append(rel);
+    }
+
+    if (files.isEmpty())
+    {
+        error_message = "No differences for the selected files.";
+        tempDir.removeRecursively();
+        return false;
+    }
+
+    for (const QString &file : files)
+    {
+        QFileInfo fileInfo(file);
+        QDir().mkpath(tempDir.filePath(fileInfo.path()));
+        QString diffOutputPath = tempDir.filePath(file + ".diff");
+
+        QProcess diffProcess;
+        diffProcess.setWorkingDirectory(QString::fromStdString(m_currentRepoPath));
+        diffProcess.setStandardOutputFile(diffOutputPath);
+        diffProcess.start("git", {"diff", diffRange, "--", file});
+
+        if (!diffProcess.waitForFinished() || diffProcess.exitCode() != 0)
+        {
+            error_message = "Failed to generate diff for file: " + file.toStdString();
+            tempDir.removeRecursively();
+            return false;
+        }
+    }
+
+    QString outZipPath = QString::fromStdString(output_zip_path);
+    if (QFile::exists(outZipPath))
+    {
+        QFile::remove(outZipPath);
+    }
+    QProcess zipProcess;
+    zipProcess.setWorkingDirectory(tempDir.absolutePath() + "/..");
+    QString tempDirName = tempDir.dirName();
+    zipProcess.start("zip", {"-r", outZipPath, tempDirName});
+    if (!zipProcess.waitForStarted(5000))
+    {
+        error_message = "Failed to start 'zip' process. Is the 'zip' utility installed and in PATH?";
+        tempDir.removeRecursively();
+        return false;
+    }
+    if (!zipProcess.waitForFinished(-1) || zipProcess.exitCode() != 0)
+    {
+        const QString stderrOut = zipProcess.readAllStandardError();
+        const QString stdoutOut = zipProcess.readAllStandardOutput();
+        error_message = "Failed to create zip archive. " +
+                        (stderrOut.isEmpty() ? stdoutOut : stderrOut).toStdString();
+        tempDir.removeRecursively();
+        QFile::remove(outZipPath);
+        return false;
+    }
+
+    tempDir.removeRecursively();
+    return true;
+}
 bool GitBackend::applyBundle(const std::string &bundle_path, std::string &error_message)
 {
     if (!isRepositoryOpen())
