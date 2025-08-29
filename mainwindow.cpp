@@ -419,10 +419,22 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
 
     connect(dlg, &ProposalReviewDialog::rejectedProposal, this, [=]() mutable
             {
+                // Ask owner for optional comments before notifying collaborator
+                bool ok = false;
+                QString comment = CustomInputDialog::getText(this,
+                                                            "Add Rejection Comment",
+                                                            "Comments on the proposal (optional):",
+                                                            "",
+                                                            &ok);
+                // If dialog canceled, treat as empty comment
+                if (!ok) comment.clear();
+
                 QVariantMap dec;
                 dec["repoName"] = repoName;
                 dec["forBranch"] = forBranch;
                 dec["accepted"] = false;
+                if (!comment.trimmed().isEmpty())
+                    dec["comment"] = comment.trimmed();
                 m_networkManager->sendEncryptedToPeerId(fromPeer, "PROPOSAL_REVIEW_DECISION", dec);
             });
 
@@ -916,6 +928,7 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
         QString repo = payload.value("repoName").toString();
         QString branch = payload.value("forBranch").toString();
         bool accepted = payload.value("accepted").toBool();
+        QString comment = payload.value("comment").toString();
         if (accepted)
         {
             notify("Proposal Accepted", QString("%1 accepted your proposal for '%2' on %3. They may upload a new version soon.")
@@ -923,8 +936,10 @@ void MainWindow::handleSecureMessage(const QString &peerId, const QString &messa
         }
         else
         {
-            notify("Proposal Rejected", QString("%1 rejected your proposal for '%2' on %3.")
-                                            .arg(peerId, repo, branch));
+            QString base = QString("%1 rejected your proposal for '%2' on %3.").arg(peerId, repo, branch);
+            if (!comment.trimmed().isEmpty())
+                base += QString("\n\nComment:\n%1").arg(comment);
+            notify("Proposal Rejected", base);
         }
         return;
     }
