@@ -20,6 +20,116 @@ CustomMessageBox::CustomMessageBox(QWidget *parent)
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
 }
 
+// ============================================================================
+// ProposalReviewDialog Implementation
+// ============================================================================
+
+ProposalReviewDialog::ProposalReviewDialog(const QString &fromPeer,
+                                           const QString &repoName,
+                                           const QString &forBranch,
+                                           const QString &message,
+                                           QWidget *parent)
+    : QDialog(parent)
+{
+    // Modeless and minimizable
+    setModal(false);
+    setWindowFlags(Qt::Dialog | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
+    setupUi(fromPeer, repoName, forBranch, message);
+    applyStyles();
+}
+
+void ProposalReviewDialog::setupUi(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &message)
+{
+    setWindowTitle("Proposed Changes Received");
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    m_titleLabel = new QLabel(QString("<b>%1</b> proposed changes to '<i>%2</i>' on branch <code>%3</code>.")
+                                  .arg(fromPeer.toHtmlEscaped(), repoName.toHtmlEscaped(), forBranch.toHtmlEscaped()),
+                              this);
+    m_titleLabel->setWordWrap(true);
+    layout->addWidget(m_titleLabel);
+
+    m_messageView = new QTextEdit(this);
+    m_messageView->setReadOnly(true);
+    if (!message.isEmpty())
+        m_messageView->setText(message);
+    else
+        m_messageView->setPlaceholderText("No proposal message provided.");
+    m_messageView->setMinimumHeight(100);
+    layout->addWidget(m_messageView);
+
+    QHBoxLayout *btns = new QHBoxLayout();
+    btns->addStretch();
+    m_acceptBtn = new QPushButton("Accept", this);
+    m_acceptBtn->setObjectName("primaryButton");
+    m_rejectBtn = new QPushButton("Reject", this);
+    btns->addWidget(m_rejectBtn);
+    btns->addWidget(m_acceptBtn);
+    layout->addLayout(btns);
+
+    connect(m_acceptBtn, &QPushButton::clicked, this, &ProposalReviewDialog::onAccept);
+    connect(m_rejectBtn, &QPushButton::clicked, this, &ProposalReviewDialog::onReject);
+}
+
+void ProposalReviewDialog::applyStyles()
+{
+    setStyleSheet(R"(
+        QDialog {
+            background-color: #FFFFFF;
+            border: 1px solid #CBD5E1;
+            border-radius: 8px;
+        }
+        QLabel {
+            color: #334155;
+            font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+            font-size: 14px;
+            font-weight: bold;
+        }
+        QTextEdit {
+            border: 1px solid #CBD5E1;
+            border-radius: 6px;
+            padding: 8px;
+            background-color: #F8FAFC;
+            font-family: "Inter", "Segoe UI", "Cantarell", "sans-serif";
+            font-size: 12px;
+        }
+        QPushButton {
+            background-color: #FFFFFF;
+            border: 1px solid #CBD5E1;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #334155;
+            min-width: 80px;
+        }
+        QPushButton:hover {
+            background-color: #F8FAFC;
+            border-color: #94A3B8;
+        }
+        QPushButton#primaryButton {
+            background-color: #0F4C4A;
+            color: #FFFFFF;
+            border: none;
+            font-weight: bold;
+        }
+        QPushButton#primaryButton:hover {
+            background-color: #14625F;
+        }
+    )");
+}
+
+void ProposalReviewDialog::onAccept()
+{
+    emit acceptedProposal();
+    close();
+}
+
+void ProposalReviewDialog::onReject()
+{
+    emit rejectedProposal();
+    close();
+}
+
 CustomMessageBox::CustomMessageBox(Icon icon, const QString &title, const QString &text,
                                    StandardButtons buttons, QWidget *parent)
     : QDialog(parent), m_icon(icon), m_text(text), m_standardButtons(buttons), m_clickedButton(NoButton)

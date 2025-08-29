@@ -105,7 +105,7 @@ private slots:
     void handleRepoBundleSent(const QString &repoName, const QString &recipientUsername);
     void handleRepoBundleTransferStarted(const QString &repoName, qint64 totalBytes);
     void handleRepoBundleProgress(const QString &repoName, qint64 bytesReceived, qint64 totalBytes);
-    void handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath);
+    void handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath, const QString &message);
     void handleRepoBundleCompleted(const QString &repoName, const QString &localBundlePath, bool success, const QString &message);
     void handleBroadcastMessage(QTcpSocket *socket, const QString &peer, const QString &msg);
     void handleGroupMessage(const QString &senderPeerId, const QString &ownerRepoAppId, const QString &message);

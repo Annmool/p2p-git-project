@@ -90,11 +90,13 @@ private:
     void loadCommitLog(const std::string &ref = "");
     void loadBranchList();
     QWidget *createChangesTab();
+    QWidget *createProposeTab();
     QWidget *createDiffsTab();
     void setDiffStatus(const QString &text, const QColor &color = QColor("#444"));
     bool verifyCommit(const QString &sha, QString &normalizedSha, QString &errorOut);
     bool checkRelatedHistories(const QString &a, const QString &b);
     QString runGit(const QStringList &args, int timeoutMs = 30000, int *exitCodeOut = nullptr);
+    void populateProposeBranches();
 
     GitBackend m_gitBackend;
     QString m_appId;
@@ -105,6 +107,7 @@ private:
     QTabWidget *m_tabWidget;
     QWidget *m_historyTab;
     QWidget *m_changesTab;
+    QWidget *m_proposeTab;
     QWidget *m_collabTab;
     QWidget *m_diffsTab;
 
@@ -125,6 +128,14 @@ private:
     QPushButton *m_refreshStatusButton;
     QTextEdit *m_commitMessageInput;
     QPushButton *m_commitButton;
+
+    // Propose Tab widgets (for collaborators)
+    QListWidget *m_proposedFilesList;
+    QPushButton *m_addFilesButton;
+    QPushButton *m_removeFilesButton;
+    QComboBox *m_targetBranchDropdown;
+    QTextEdit *m_proposalMessageInput;
+    QPushButton *m_sendProposalButton;
 
     // Collaboration Tab widgets
     QListWidget *m_groupMembersList;

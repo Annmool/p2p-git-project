@@ -221,7 +221,7 @@ void MainWindow::connectSignals()
         connect(m_networkManager, &NetworkManager::secureMessageReceived, this, &MainWindow::handleSecureMessage);
         connect(m_networkManager, &NetworkManager::collaboratorAddedReceived, this, &MainWindow::handleCollaboratorAdded);
         connect(m_networkManager, &NetworkManager::collaboratorRemovedReceived, this, &MainWindow::handleCollaboratorRemoved);
-        // Proposal/notifications features are disabled in this build
+        connect(m_networkManager, &NetworkManager::changeProposalReceived, this, &MainWindow::handleIncomingChangeProposal);
     }
 
     connect(m_dashboardPanel, &DashboardPanel::openRepoInGitPanel, this, &MainWindow::handleOpenRepoInProjectWindow);
@@ -235,6 +235,7 @@ void MainWindow::connectSignals()
     connect(m_networkPanel, &NetworkPanel::connectToPeerRequested, this, &MainWindow::handleConnectToPeer);
     connect(m_networkPanel, &NetworkPanel::cloneRepoRequested, this, &MainWindow::handleCloneRepo);
     connect(m_networkPanel, &NetworkPanel::addCollaboratorRequested, this, &MainWindow::handleAddCollaboratorFromPanel);
+    connect(m_networkPanel, &NetworkPanel::disconnectFromPeerRequested, this, &MainWindow::handleDisconnectFromPeer);
 
     // No notifications button in this build
 
@@ -330,56 +331,29 @@ void MainWindow::handleFetchBundleRequest(const QString &ownerPeerId, const QStr
 
 void MainWindow::handleProposeChangesRequest(const QString &ownerPeerId, const QString &repoDisplayName, const QString &fromBranch)
 {
-    QTcpSocket *ownerSocket = m_networkManager->getSocketForPeer(ownerPeerId);
-    if (!ownerSocket)
-    {
-        CustomMessageBox::warning(this, "Not Connected", QString("You must be connected to the owner (%1) to propose changes.").arg(ownerPeerId));
-        return;
-    }
-
-    ManagedRepositoryInfo repoInfo = m_repoManager->getCloneInfoByOwnerAndDisplayName(ownerPeerId, repoDisplayName);
-    if (!repoInfo.isValid())
+    // The actual sending logic is now in ProjectWindow to create the diff bundle first.
+    // This MainWindow slot will be triggered by a signal from ProjectWindow.
+    ProjectWindow *sender_pw = qobject_cast<ProjectWindow *>(sender());
+    if (!sender_pw)
         return;
 
-    GitBackend backend;
-    std::string error;
-    if (!backend.openRepository(repoInfo.localPath.toStdString(), error))
-        return;
-
-    QTemporaryFile tempBundleFile(QDir::tempPath() + "/proposal_XXXXXX.bundle");
-    tempBundleFile.setAutoRemove(false);
-    if (tempBundleFile.open())
-    {
-        QString bundlePath = tempBundleFile.fileName();
-        tempBundleFile.close();
-
-        if (backend.createDiffBundle(bundlePath.toStdString(), fromBranch.toStdString(), "origin/main", error))
-        {
-            m_networkManager->sendChangeProposal(ownerSocket, repoDisplayName, fromBranch, bundlePath);
-            CustomMessageBox::information(this, "Proposal Sent", "Your changes have been sent to the owner for review.");
-        }
-        else
-        {
-            CustomMessageBox::warning(this, "Failed to Propose", QString::fromStdString(error));
-        }
-    }
+    // We can directly call the network manager's high-level send function
+    // as the bundle path will be handled by the ProjectWindow.
+    // The actual bundle creation and sending is initiated from ProjectWindow now.
+    // This handler is kept for legacy connection but the main logic moved to ProjectWindow.
 }
 
 // Legacy propose-files meta/archive handlers removed in this build.
 
-void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &bundlePath)
+void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QString &repoName, const QString &forBranch, const QString &tempBundlePath, const QString &message)
 {
-    CustomMessageBox::StandardButton ret = CustomMessageBox::question(
-        this,
-        "Change Proposal Received",
-        QString("Peer '%1' has proposed changes for repository '%2' from their branch '%3'.\n\nOpen Diffs to review?").arg(fromPeer, repoName, forBranch),
-        CustomMessageBox::Yes | CustomMessageBox::No);
-    if (ret == CustomMessageBox::No)
-    {
-        QFile::remove(bundlePath);
-        return;
-    }
+    // Defer to the next tick to avoid reentrancy with network signal handling.
+    QTimer::singleShot(0, this, [=]()
+                       {
+    // The proposal bundle has been fully downloaded to tempBundlePath.
+    // The progress dialog was already closed by handleRepoBundleCompleted.
 
+    // 1. Identify the owner's repository entry.
     ManagedRepositoryInfo repoInfo;
     for (const auto &repo : m_repoManager->getRepositoriesIAmMemberOf())
     {
@@ -389,123 +363,88 @@ void MainWindow::handleIncomingChangeProposal(const QString &fromPeer, const QSt
             break;
         }
     }
-
     if (!repoInfo.isValid())
     {
         CustomMessageBox::critical(this, "Error", "Received a change proposal for a repository you don't own or manage.");
-        QFile::remove(bundlePath);
+        QFile::remove(tempBundlePath);
         return;
     }
 
-    // Open repo and prepare a preview worktree at current HEAD to simulate merge for diff preview
-    GitBackend backend;
-    std::string error;
-    if (!backend.openRepository(repoInfo.localPath.toStdString(), error))
+    // 2. If tempBundlePath already looks like a final selected path (because we set it in NetworkManager),
+    //    skip re-asking and moving. Otherwise, prompt and move.
+    QString finalPath = tempBundlePath;
+    bool cameFromTemp = tempBundlePath.contains(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
+    if (cameFromTemp)
     {
-        CustomMessageBox::critical(this, "Error", "Could not open local repository to preview changes.");
-        QFile::remove(bundlePath);
-        return;
-    }
+        QString defaultName = QString("proposal_%1_from_%2.zip").arg(repoName, fromPeer);
+        QString savePath = CustomFileDialog::getSaveFileName(this, "Save Incoming Proposal",
+                                                             QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)).filePath(defaultName),
+                                                             "Zip Archive (*.zip)");
 
-    // Capture prev HEAD sha
-    QString prevHeadSha;
-    {
-        QProcess p;
-        p.setWorkingDirectory(repoInfo.localPath);
-        p.start("git", {"rev-parse", "HEAD"});
-        if (p.waitForFinished(10000) && p.exitCode() == 0)
-            prevHeadSha = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-    }
-
-    // Create a detached worktree at prev HEAD
-    QString wtPath = QDir::tempPath() + "/SyncIt_wt_" + repoName + "_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + "_" + QString::number(static_cast<qulonglong>(QRandomGenerator::global()->generate64()));
-    QDir().mkpath(wtPath);
-    QString gitExe = QStandardPaths::findExecutable("git");
-    bool previewReady = false;
-    QString previewSha;
-    if (!gitExe.isEmpty() && !prevHeadSha.isEmpty())
-    {
-        QProcess addWt;
-        addWt.setWorkingDirectory(repoInfo.localPath);
-        addWt.start(gitExe, {"worktree", "add", "--detach", wtPath, prevHeadSha});
-        if (addWt.waitForFinished(600000) && addWt.exitCode() == 0)
+        if (savePath.isEmpty())
         {
-            // Apply bundle in the worktree only
-            GitBackend wtBackend;
-            if (wtBackend.openRepository(wtPath.toStdString(), error))
+            CustomMessageBox::information(this, "Proposal Discarded", "The incoming proposal diff file was not saved and has been discarded.");
+            QFile::remove(tempBundlePath);
+            return;
+        }
+
+        if (QFile::exists(savePath))
+        {
+            QFile::remove(savePath);
+        }
+        if (!QFile::rename(tempBundlePath, savePath))
+        {
+            CustomMessageBox::critical(this, "File Error", "Could not move the downloaded proposal file. It has been discarded.");
+            QFile::remove(tempBundlePath);
+            return;
+        }
+        finalPath = savePath;
+    }
+
+    // 3. Show the review dialog (only for viewing the received zip). No git apply will be done here.
+    notify("Change Proposal Received", QString("%1 proposed changes to '%2'.\nZip saved at: %3").arg(fromPeer, repoName, finalPath));
+    ProposalReviewDialog *dlg = new ProposalReviewDialog(fromPeer, repoName, forBranch, message, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 5. Connect accept/reject handlers. They will now use `savePath`.
+    connect(dlg, &ProposalReviewDialog::acceptedProposal, this, [=]() mutable
             {
-                if (wtBackend.applyBundle(bundlePath.toStdString(), error))
-                {
-                    QProcess rev;
-                    rev.setWorkingDirectory(wtPath);
-                    rev.start(gitExe, {"rev-parse", "HEAD"});
-                    if (rev.waitForFinished(10000) && rev.exitCode() == 0)
-                    {
-                        previewSha = QString::fromUtf8(rev.readAllStandardOutput()).trimmed();
-                        previewReady = !previewSha.isEmpty();
-                    }
-                }
-            }
-        }
-    }
+                // Notify collaborator once that the proposal was accepted
+                QVariantMap dec;
+                dec["repoName"] = repoName;
+                dec["forBranch"] = forBranch;
+                dec["accepted"] = true;
+                m_networkManager->sendEncryptedToPeerId(fromPeer, "PROPOSAL_REVIEW_DECISION", dec);
+            });
 
-    // Show diffs and a minimizable dialog for applying
-    if (previewReady && m_projectWindows.contains(repoInfo.appId) && m_projectWindows[repoInfo.appId])
-    {
-        ProjectWindow *pw = m_projectWindows[repoInfo.appId];
-        pw->updateStatus();
-        pw->showDiffForRange(prevHeadSha, previewSha);
-    }
-
-    // Ask whether to apply now; if yes, apply bundle into main repo and clean up preview
-    auto decision = CustomMessageBox::question(this,
-                                               "Apply Proposed Changes",
-                                               QString("Review diffs for '%1' on branch '%2' are ready.\nDo you want to apply and commit these changes now?").arg(repoName, forBranch),
-                                               CustomMessageBox::Yes | CustomMessageBox::No);
-    if (decision == CustomMessageBox::Yes)
-    {
-        GitBackend mainBackend;
-        std::string err;
-        if (!mainBackend.openRepository(repoInfo.localPath.toStdString(), err))
-        {
-            CustomMessageBox::critical(this, "Error", "Could not open repository to apply changes.");
-        }
-        else if (mainBackend.applyBundle(bundlePath.toStdString(), err))
-        {
-            QString newHeadSha;
-            QProcess p;
-            p.setWorkingDirectory(repoInfo.localPath);
-            p.start("git", {"rev-parse", "HEAD"});
-            if (p.waitForFinished(10000) && p.exitCode() == 0)
-                newHeadSha = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-            CustomMessageBox::information(this, "Changes Committed", "The proposed changes have been applied as a commit.");
-            if (m_projectWindows.contains(repoInfo.appId) && m_projectWindows[repoInfo.appId])
+    connect(dlg, &ProposalReviewDialog::rejectedProposal, this, [=]() mutable
             {
-                auto pw = m_projectWindows[repoInfo.appId];
-                pw->updateStatus();
-                if (!prevHeadSha.isEmpty() && !newHeadSha.isEmpty())
-                    pw->showDiffForRange(prevHeadSha, newHeadSha);
-            }
-        }
-        else
-        {
-            CustomMessageBox::critical(this, "Apply Failed", QString::fromStdString(err));
-        }
-    }
-    // Clean up preview worktree and bundle either way
-    if (!gitExe.isEmpty())
-    {
-        QProcess rm;
-        rm.setWorkingDirectory(repoInfo.localPath);
-        rm.start(gitExe, {"worktree", "remove", "--force", wtPath});
-        rm.waitForFinished(600000);
-    }
-    QFile::remove(bundlePath);
-    QDir(wtPath).removeRecursively();
-    return;
+                // Ask owner for optional comments before notifying collaborator
+                bool ok = false;
+                QString comment = CustomInputDialog::getText(this,
+                                                            "Add Rejection Comment",
+                                                            "Comments on the proposal (optional):",
+                                                            "",
+                                                            &ok);
+                // If dialog canceled, treat as empty comment
+                if (!ok) comment.clear();
+
+                QVariantMap dec;
+                dec["repoName"] = repoName;
+                dec["forBranch"] = forBranch;
+                dec["accepted"] = false;
+                if (!comment.trimmed().isEmpty())
+                    dec["comment"] = comment.trimmed();
+                m_networkManager->sendEncryptedToPeerId(fromPeer, "PROPOSAL_REVIEW_DECISION", dec);
+            });
+
+    dlg->show(); });
 }
 
-// ... All other handler functions are the same as the last complete version you provided ...
+// Handle pre-review requests and respond with accept/reject without pulling/applying anything.
+// This is received as a secure message in secureMessageReceived switch below.
+
+// ...
 void MainWindow::handleProjectWindowGroupMessage(const QString &ownerRepoAppId, const QString &message)
 {
     m_networkManager->sendGroupChatMessage(ownerRepoAppId, message);
@@ -546,8 +485,18 @@ void MainWindow::handleGroupMessage(const QString &senderPeerId, const QString &
 
 void MainWindow::handleDisconnectFromPeer(const QString &peerId)
 {
-    Q_UNUSED(peerId);
-    // Refresh UI to reflect disconnected peer states
+    if (!m_networkManager)
+        return;
+    QTcpSocket *sock = m_networkManager->getSocketForPeer(peerId);
+    if (sock)
+    {
+        m_networkPanel->logMessage(QString("Disconnecting from '%1'...").arg(peerId), QColor("#b45309"));
+        sock->disconnectFromHost();
+    }
+    else
+    {
+        m_networkPanel->logMessage(QString("No active connection to '%1' found.").arg(peerId), Qt::red);
+    }
     updateUiFromBackend();
 }
 
@@ -899,52 +848,98 @@ void MainWindow::handleRemoveCollaboratorFromProjectWindow(const QString &appId,
 
 void MainWindow::handleSecureMessage(const QString &peerId, const QString &messageType, const QVariantMap &payload)
 {
-    if (messageType == "ADD_MANAGED_REPO")
+    if (messageType == "PROPOSAL_REVIEW_REQUEST")
     {
-        // Owner notified us after they sent a bundle; ensure our local repo entry has a stable ownerRepoAppId
-        QString repoDisplayName = payload.value("repoDisplayName").toString();
-        QString ownerRepoAppId = payload.value("ownerRepoAppId").toString();
-        QStringList members = payload.value("groupMembers").toStringList();
-        if (!repoDisplayName.isEmpty() && !ownerRepoAppId.isEmpty())
-        {
-            // Find the recently-added clone by owner peer and display name
-            ManagedRepositoryInfo clone = m_repoManager->getRepositoryInfoByOwnerAndDisplayName(peerId, repoDisplayName);
-            if (clone.isValid() && !clone.isOwner)
-            {
-                m_repoManager->updateGroupMembersAndOwnerAppId(clone.appId, ownerRepoAppId, members.isEmpty() ? clone.groupMembers : members);
-                m_networkPanel->logMessage(QString("Set ownerRepoAppId for '%1' to %2; group chat channel is now stable.").arg(repoDisplayName, ownerRepoAppId), QColor("#2c7a7b"));
-                updateUiFromBackend();
-            }
-        }
+        QString repo = payload.value("repoName").toString();
+        QString branch = payload.value("forBranch").toString();
+        QString msg = payload.value("message").toString();
+        // Show a non-modal 5-second notification, then prompt for a download directory
+        QTimer::singleShot(0, this, [=]()
+                           {
+            // Timed notification
+            CustomMessageBox *infoDlg = new CustomMessageBox(CustomMessageBox::Information,
+                                                             "Change Proposal",
+                                                             QString("%1 proposed changes to '%2' on %3.\n\nMessage:\n%4")
+                                                                 .arg(peerId, repo, branch, msg),
+                                                             CustomMessageBox::NoButton,
+                                                             this);
+            infoDlg->setModal(false);
+            infoDlg->show();
+
+            // Dynamic display time: base 5s + ~1s per 50 chars, capped at 20s
+            QString notifText = QString("%1 proposed changes to '%2' on %3.\n\nMessage:\n%4")
+                                     .arg(peerId, repo, branch, msg);
+            int extraMs = (notifText.length() / 50) * 1000; // ~1s per 50 chars
+            int displayMs = qMin(20000, 5000 + extraMs);
+            QTimer::singleShot(displayMs, this, [=]() {
+                if (infoDlg) {
+                    infoDlg->close();
+                    infoDlg->deleteLater();
+                }
+
+                // Let the owner choose directory AND filename to save the incoming .zip
+                QString defaultBase = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+                if (defaultBase.isEmpty()) defaultBase = QDir::homePath();
+                QString defaultName = QString("proposal_%1_from_%2.zip").arg(repo, peerId);
+                QString defaultPath = QDir(defaultBase).filePath(defaultName);
+                QString fullPath = CustomFileDialog::getSaveFileName(this,
+                                                                     "Choose file to save incoming proposal diff",
+                                                                     defaultPath,
+                                                                     "Zip Archive (*.zip)");
+                if (fullPath.isEmpty()) {
+                    // Fallback to default path if user cancels
+                    fullPath = defaultPath;
+                }
+
+                // Ensure the directory exists for the chosen path
+                QDir targetDir = QFileInfo(fullPath).dir();
+                if (!targetDir.exists()) targetDir.mkpath(".");
+
+                // Set pending path so transfer writes directly here
+                if (m_networkManager) {
+                    m_networkManager->setPendingProposalSavePath(peerId, repo, branch, fullPath);
+                }
+
+                // Now signal readiness so collaborator can send the zip
+                if (m_networkManager) {
+                    QVariantMap acceptPayload;
+                    acceptPayload["repoName"] = repo;
+                    acceptPayload["forBranch"] = branch;
+                    acceptPayload["message"] = msg;
+                    m_networkManager->sendEncryptedToPeerId(peerId, "PROPOSAL_REVIEW_ACCEPTED", acceptPayload);
+                }
+            }); });
         return;
     }
-
-    qDebug() << "Received generic secure message of type" << messageType << "from" << peerId;
+    if (messageType == "PROPOSAL_REVIEW_ACCEPTED")
+    {
+        // Collaborator side informational only; actual sending is triggered internally.
+        notify("Review Accepted", QString("%1 is ready to receive your proposal.").arg(peerId));
+        return;
+    }
+    if (messageType == "PROPOSAL_REVIEW_REJECTED")
+    {
+        notify("Review Declined", QString("%1 declined to review your proposal.").arg(peerId));
+        return;
+    }
     if (messageType == "PROPOSAL_REVIEW_DECISION")
     {
+        // Collaborator receives owner decision after reviewing downloaded zip
         QString repo = payload.value("repoName").toString();
         QString branch = payload.value("forBranch").toString();
         bool accepted = payload.value("accepted").toBool();
-        QString stage = payload.value("stage").toString();
-        QString title = accepted ? "Proposal Accepted" : "Proposal Dismissed";
-        QString msg = accepted ? QString("Owner accepted your proposal for '%1' on %2 (%3).").arg(repo, branch, stage)
-                               : QString("Owner dismissed your proposal for '%1' on %2 (%3).").arg(repo, branch, stage);
-        notify(title, msg);
-        return;
-    }
-    if (messageType == "PROPOSAL_APPLY_RESULT")
-    {
-        QString repo = payload.value("repoName").toString();
-        QString branch = payload.value("forBranch").toString();
-        bool applied = payload.value("applied").toBool();
-        QString title = applied ? "Proposal Applied" : "Proposal Apply Failed";
-        QString msg = applied ? QString("Owner applied your proposed changes to '%1' on %2.").arg(repo, branch)
-                              : QString("Owner failed to apply your proposed changes to '%1' on %2.").arg(repo, branch);
-        notify(title, msg);
-        // If applied, automatically pull the updated repo from the owner via a temporary socket
-        if (applied)
+        QString comment = payload.value("comment").toString();
+        if (accepted)
         {
-            m_networkManager->requestBundleFromPeer(peerId, repo, "");
+            notify("Proposal Accepted", QString("%1 accepted your proposal for '%2' on %3. They may upload a new version soon.")
+                                            .arg(peerId, repo, branch));
+        }
+        else
+        {
+            QString base = QString("%1 rejected your proposal for '%2' on %3.").arg(peerId, repo, branch);
+            if (!comment.trimmed().isEmpty())
+                base += QString("\n\nComment:\n%1").arg(comment);
+            notify("Proposal Rejected", base);
         }
         return;
     }
@@ -1050,7 +1045,11 @@ void MainWindow::handleRepoBundleRequest(QTcpSocket *requestingPeerSocket, const
     if (tempGitBackend.createBundle(uniqueOutDir.toStdString(), repoToBundle.displayName.toStdString(), bundleFilePathStd, errorMsgBundle))
     {
         m_networkPanel->logMessage(QString("Bundle for '%1' created. Starting transfer to %2...").arg(repoDisplayName, sourcePeerUsername), "purple");
-        m_networkManager->startSendingBundle(requestingPeerSocket, repoDisplayName, QString::fromStdString(bundleFilePathStd));
+        // Kick off the actual transfer over the same socket
+        if (m_networkManager)
+        {
+            m_networkManager->startSendingBundle(requestingPeerSocket, repoDisplayName, QString::fromStdString(bundleFilePathStd));
+        }
     }
     else
     {
@@ -1161,8 +1160,8 @@ void MainWindow::handleRepoBundleProgress(const QString &repoName, qint64 bytesR
         QString progressText = QString("Downloading repository: %1\nProgress: %2% (%3 KB / %4 KB)\n%5\n%6")
                                    .arg(repoName)
                                    .arg(pct)
-                                   .arg(bytesReceived / 1024)
-                                   .arg(totalBytes / 1024)
+                                   .arg(bytesReceived / 1024.0, 0, 'f', 1)
+                                   .arg(totalBytes / 1024.0, 0, 'f', 1)
                                    .arg(speedInfo)
                                    .arg(etaInfo);
         m_transferProgressDialog->setLabelText(progressText);
@@ -1204,10 +1203,13 @@ void MainWindow::handleRepoBundleCompleted(const QString &repoName, const QStrin
         return;
     }
 
-    // Always try to add the repo after a successful clone, even if message type is blank or unexpected
-    if (!m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoDisplayName != repoName)
+    // This handler is only for clones with git bundle files (.bundle). Proposals (.zip) are handled elsewhere.
+    if (!localBundlePath.endsWith(".bundle", Qt::CaseInsensitive) ||
+        !m_pendingCloneRequest.isValid() || m_pendingCloneRequest.repoDisplayName != repoName)
     {
-        m_networkPanel->logMessage(QString("Received unexpected bundle for '%1'. Attempting to add to managed repositories anyway.").arg(repoName), QColor("orange"));
+        // This can happen if a proposal bundle download finishes. Ignore it here.
+        qDebug() << "Bundle completed for non-clone operation:" << repoName;
+        return;
     }
 
     m_networkPanel->logMessage(QString("Bundle for '%1' received. Cloning...").arg(repoName), "blue");
